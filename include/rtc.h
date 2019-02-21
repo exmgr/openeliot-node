@@ -1,0 +1,27 @@
+#ifndef RTC_H
+#define RTC_H
+
+#include "struct.h"
+
+namespace RTC
+{
+    RetResult init();
+
+    RetResult sync();
+
+    uint32_t get_timestamp();
+
+    void print_time();
+
+    // TODO: Temp public
+    RetResult sync_gsm_rtc_from_ntp();
+    RetResult sync_time_from_gsm_rtc();
+    RetResult sync_time_from_http();
+    RetResult sync_time_from_ext_rtc();
+    RetResult init_external_rtc();
+    RetResult set_external_rtc_time(uint32_t timestamp);
+    RetResult set_system_time(uint32_t timestamp);
+    // TODO: up to here
+}
+
+#endif
