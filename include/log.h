@@ -16,7 +16,7 @@ namespace Log
      */
     struct Entry
     {
-        uint32_t timestamp;
+        unsigned long long timestamp;
         Code code;
         int meta1;
         int meta2;
@@ -29,6 +29,8 @@ namespace Log
     void print(const Log::Entry *entry);
 
     DataStore<Entry>* get_store();
+
+    void set_enabled(bool enabled);
 }
 
 #endif

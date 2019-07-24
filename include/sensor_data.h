@@ -33,7 +33,7 @@ namespace SensorData
         int water_level;
     }__attribute__((packed));
 
-    bool add(Entry *data);
+    RetResult add(Entry *data);
 
     DataStore<Entry>* get_store();
 

@@ -11,6 +11,7 @@ RetResult TbSensorDataJsonBuilder::add(const SensorData::Entry *entry)
 	json_entry["ts"] = (long long)entry->timestamp * 1000;
 	JsonObject values = json_entry.createNestedObject("values");
 	
+	// TODO: Convert key names to constants
 	values["s_do"] = entry->dissolved_oxygen;
 	values["s_temp"] = entry->temperature;
 	values["s_ph"] = entry->ph;

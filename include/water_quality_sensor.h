@@ -7,10 +7,6 @@ namespace WaterQualitySensor
 {
     RetResult init();
 
-    RetResult on();
-
-    RetResult off();
-
     RetResult measure(SensorData::Entry *data);
 
     RetResult measure_dummy(SensorData::Entry *data);

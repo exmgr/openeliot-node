@@ -21,14 +21,12 @@ namespace DeviceConfig
         /** Current wake up schedule as set by user or loaded from defaults */
         Sleep::WakeupScheduleEntry wakeup_schedule[WAKEUP_SCHEDULE_LEN];
 
-        /** When set, there is config from remote_control_data that needs to be applied.
-         * Set when new remote control data is downloaded and there is config that can
-         * only be applied on boot */
-        bool apply_remote_control_on_boot;
+        /** Set after OTA to denote that a new FW was flashed, so the new FW knows its new
+         * Must be cleared on boot. */
+        bool ota_flashed;
 
-        /** Last received remote control data. Also contains the config id from which is
-         * decided if the config received is new or already applied. */
-        RemoteControl::Data remote_control_data;
+        /** Data id of last remote control data applied. Used to check if received config data is new */
+        unsigned int last_rc_data_id;
     }__attribute__((packed));
 
     RetResult init();
@@ -38,17 +36,19 @@ namespace DeviceConfig
     void print_current();
 
     // Getters
-    const RemoteControl::Data* get_remote_control_data();
-
+    int get_last_rc_data_id();
+    
     // Setters
     RetResult set_clean_reboot(bool val);
-    RetResult set_apply_remote_control(bool val);
     RetResult set_wakeup_schedule(const Sleep::WakeupScheduleEntry* schedule);
     RetResult set_wakeup_schedule_reason_int(Sleep::WakeupReason reason, int int_mins);
     RetResult set_remote_control_data(const RemoteControl::Data *new_data);
+    RetResult set_last_rc_data_id(int id);
+    RetResult set_ota_flashed(bool val);
 
     int get_wakeup_schedule_reason_int(Sleep::WakeupReason reason);
     bool get_clean_reboot();
+    bool get_ota_flashed();
 }
 
 #endif

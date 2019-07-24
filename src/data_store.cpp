@@ -38,7 +38,7 @@ RetResult DataStore<TStruct>::add(TStruct *data)
         // Commit to flash
         commit();
 
-        Serial.println(F("--Data store full, commiting and erasing."));
+        Serial.println(F("Data store full, commiting and erasing."));
     }
 
 	// Prepare metadata of new entry (crc32)
@@ -252,8 +252,6 @@ const char* DataStore<TStruct>::get_dir_path() const
 template <class TStruct>
 RetResult DataStore<TStruct>::update_current_data_file_path()
 {
-	Serial.println(F("Updating store data file path."));
-
 	File dir = SPIFFS.open(_dir_path);
 	if(!dir)
 	{
@@ -278,8 +276,8 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 	cur_file.close();
 	dir.close();
 
-	Serial.print(F("Smallest size: ")); // del
-	Serial.println(smallest_size, DEC);
+	// Serial.print(F("Smallest size: ")); // del
+	// Serial.println(smallest_size, DEC);
 
 	// Smallest file found, check if there is space in it for at least one entry
 	// else create a new file

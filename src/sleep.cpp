@@ -6,6 +6,7 @@
 #include "struct.h"
 #include "log.h"
 #include "device_config.h"
+#include "battery.h"
 
 namespace Sleep
 {
@@ -26,7 +27,8 @@ namespace Sleep
 	// Private functions
 	//
 	RetResult calc_next_sleep_mins();
-	Sleep::WakeupScheduleEntry* get_schedule();
+	RetResult get_current_schedule(Sleep::WakeupScheduleEntry *schedule_out);
+	RetResult decide_schedule(Sleep::WakeupScheduleEntry schedule_out[]);
 
 	/******************************************************************************
 	* Decide minutes to sleep and go to sleep
@@ -55,7 +57,12 @@ namespace Sleep
 		//
 		int sleep_time_mins = 0;
 
-		WakeupScheduleEntry *schedule = get_schedule();
+		WakeupScheduleEntry schedule[WAKEUP_SCHEDULE_LEN];
+		decide_schedule(schedule);
+
+		Battery::print_mode();
+
+		print_schedule(schedule);
 		
 		calc_next_wakeup(_last_t, schedule, WAKEUP_SCHEDULE_LEN, &sleep_time_mins, &_last_wakeup_reasons);		
 
@@ -112,7 +119,7 @@ namespace Sleep
 			//
 			// Wake up!
 			//
-			Log::log(Log::WAKEUP);
+			Log::log(Log::WAKEUP, _last_wakeup_reasons);
 			Serial.println(F("Wake up!"));
 
 			// Keep sleep time
@@ -187,11 +194,48 @@ namespace Sleep
 	}
 
 	/******************************************************************************
-	 * Decide which wake up schedule to use and return
+	 * Get current schedule used and return
+	 * // TODO: Useless?
 	 *****************************************************************************/
-	Sleep::WakeupScheduleEntry* get_schedule()
+	/*
+	RetResult get_current_schedule(Sleep::WakeupScheduleEntry *schedule_out)
 	{
-		return (WakeupScheduleEntry*)&WAKEUP_SCHEDULE_DEFAULT;
+		const DeviceConfig::Data *device_config = DeviceConfig::get();
+
+		memcpy(schedule_out, device_config->wakeup_schedule, WAKEUP_SCHEDULE_LEN);
+
+		return RET_OK;
+	}
+	*/
+
+	/******************************************************************************
+	 * Decide which schedule to use depending on current battery mode
+	 *****************************************************************************/
+	RetResult decide_schedule(Sleep::WakeupScheduleEntry schedule_out[])
+	{
+		BATTERY_MODE battery_mode = Battery::get_current_mode();
+
+		switch (battery_mode)
+		{
+			case BATTERY_MODE::BATTERY_MODE_NORMAL:
+			{
+				const DeviceConfig::Data *device_config = DeviceConfig::get();
+				memcpy(schedule_out, device_config->wakeup_schedule, sizeof(WAKEUP_SCHEDULE_DEFAULT));
+				break;
+			}
+			case BATTERY_MODE::BATTERY_MODE_LOW:
+				memcpy(schedule_out, WAKEUP_SCHEDULE_BATT_LOW, sizeof(WAKEUP_SCHEDULE_BATT_LOW));
+				break;
+			default:
+				// TODO: How to handle this?
+				Utils::serial_style(STYLE_RED);
+				Serial.println(F("Unknown battery mode, using battery low schedule."));
+				memcpy(schedule_out, WAKEUP_SCHEDULE_BATT_LOW, sizeof(WAKEUP_SCHEDULE_BATT_LOW));
+				Utils::serial_style(STYLE_RESET);
+				break;
+		}
+
+		return RET_OK;
 	}
 
 	/******************************************************************************
@@ -205,5 +249,28 @@ namespace Sleep
 		// the correct schedule depending on conditions (battery level)
 
 		return _last_wakeup_reasons & reason ? true : false;
+	}
+
+	/******************************************************************************
+	 * Print wake up schedule to serial output
+	 *****************************************************************************/
+	void print_schedule(Sleep::WakeupScheduleEntry schedule[])
+	{
+		Utils::print_separator(F("Sleep schedule"));
+		
+		for(int i = 0; i < WAKEUP_SCHEDULE_LEN; i++)
+		{
+			switch(schedule[i].reason)
+			{
+				case REASON_READ_WATER_SENSORS:
+					Serial.print(F("Water sensors read int: "));
+					break;
+				case REASON_CALL_HOME:
+					Serial.print(F("Calling home int: "));
+					break;
+			}
+
+			Serial.println(schedule[i].interval_mins);
+		}
 	}
 }

@@ -472,13 +472,9 @@ namespace Tests
 		Utils::serial_style(STYLE_RESET);
 
 		// Create dummy vals
-		RemoteControl::Data dummy_remote_control_data(random(INT_MAX), random(INT_MAX),
-		random(INT_MAX) % 2, random(INT_MAX) % 2);
-
 		DeviceConfig::Data dummy_config;
 		dummy_config.clean_reboot = random(INT_MAX) % 2;
-		dummy_config.apply_remote_control_on_boot = random(INT_MAX) % 2;
-		dummy_config.remote_control_data = dummy_remote_control_data;
+		dummy_config.ota_flashed = random(INT_MAX) % 2;
 
 
 		// Do not include crc32 field in the calculation
@@ -487,8 +483,7 @@ namespace Tests
 
 		// Set
 		DeviceConfig::set_clean_reboot(dummy_config.clean_reboot);
-		DeviceConfig::set_apply_remote_control(dummy_config.apply_remote_control_on_boot);
-		DeviceConfig::set_remote_control_data(&dummy_config.remote_control_data);
+		DeviceConfig::set_ota_flashed(dummy_config.ota_flashed);
 
 		// Write
 		DeviceConfig::commit();
@@ -504,7 +499,7 @@ namespace Tests
 
 		const DeviceConfig::Data *read_back = DeviceConfig::get();
 
-		// Reading or crc failed)
+		// Reading or CRC failed
 		if(read_back == nullptr)
 		{
 			Serial.println(F("Could not read back config."));

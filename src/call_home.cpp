@@ -7,7 +7,7 @@
 #include "rtc.h"
 #include "tb_sensor_data_json_builder.h"
 #include "tb_diagnostics_json_builder.h"
-#include "log_json_builder.h"
+#include "tb_log_json_builder.h"
 #include "test_utils.h"
 #include "utils.h"
 #include "gsm.h"
@@ -16,28 +16,32 @@
 #include "remote_control.h"
 #include "battery.h"
 #include "int_env_sensor.h"
+#include "http_request.h"
+#include "log.h"
+#include "globals.h"
 
 namespace CallHome
 {
 	RetResult handle_sensor_data();
-	RetResult submit_sensor_data(const char *data, int data_size);
-
-	RetResult handle_logs();
-	RetResult submit_log_data(const char *data, int data_size);
+	RetResult submit_tb_telemetry(const char *data, int data_size);
 
 	/******************************************************************************
 	* Handle waking up from sleep to call home
 	******************************************************************************/
 	RetResult start()
 	{
+		RTC::print_time();
+
 		Utils::serial_style(STYLE_BLUE);
 		Utils::print_separator(F("Calling Home"));
 		Utils::serial_style(STYLE_RESET);
 		Serial.println();
 
 		Log::log(Log::Code::CALLING_HOME);
-		Battery::log_gauge();
+		Battery::log_adc();
 		IntEnvSensor::log();
+
+		Log::log(Log::Code::FS_SPACE, SPIFFS.usedBytes(), SPIFFS.totalBytes() - SPIFFS.usedBytes());
 
 		Utils::serial_style(STYLE_BLUE);
 		Utils::print_separator(F("FILES BEFORE CALLING HOME"));
@@ -47,6 +51,7 @@ namespace CallHome
 		GSM::on();
 		if(GSM::connect_persist() != RET_OK)
 		{
+
 			Serial.println(F("Could not connect GSM. Aborting."));
 			return RET_ERROR;
 		}
@@ -80,12 +85,22 @@ namespace CallHome
 		Utils::serial_style(STYLE_RESET);
 
 		//
-		// Send device status and receive config
+		// Ask for remote control data and apply
 		//
 		Utils::serial_style(STYLE_BLUE);
 		Serial.println(F("# Request remote control data"));
 		Utils::serial_style(STYLE_RESET);
-		// handle_remote_control();
+		handle_remote_control();
+
+		//
+		// Publish TB client attributes
+		//
+		Utils::serial_style(STYLE_BLUE);
+		Serial.println(F("# Publishing TB client attributes"));
+		Utils::serial_style(STYLE_RESET);
+		handle_client_attributes();
+
+		// Done
 
 		GSM::off();
 
@@ -95,25 +110,15 @@ namespace CallHome
 		Serial.println();
 
 		//
-		// Send diagnostics telemetry to TB
-		//
-		// TODO: Useless???
-		//handle_diagnostics();
-
-		//
 		// Calling home handling finished, reboot if requested.
 		//
 		if(RemoteControl::get_reboot_pending())
 		{
-			// Set flag before rebooting so we know that the reboot was normal
-			DeviceConfig::set_clean_reboot(true);
-			DeviceConfig::commit();
-
 			Utils::serial_style(STYLE_BLUE);
 			Serial.println(F("Device reboot requested. Rebooting..."));
 			Utils::serial_style(STYLE_RESET);
 
-			ESP.restart();
+			Utils::restart_device();
 		}
 
 		return RET_OK;
@@ -181,7 +186,7 @@ namespace CallHome
 
 				total_requests++;
 
-				if(submit_sensor_data(json_buff, strlen(json_buff)) == RET_OK)
+				if(submit_tb_telemetry(json_buff, strlen(json_buff)) == RET_OK)
 				{
 					// Request success, file can be deleted
 					reader.delete_file();
@@ -203,7 +208,7 @@ namespace CallHome
 			}
 			else
 			{
-				// All entries failed CRC in this file, delete it
+				// All entries failed CRC in this file so it is useless, delete it
 				reader.delete_file();
 
 				Utils::serial_style(STYLE_BLUE);
@@ -244,32 +249,6 @@ namespace CallHome
 	}
 
 	/******************************************************************************
-	 * Submit a single sensor data request to TB
-	 * @param data Buffer with json for TB
-	 * @param data_size Buffer size
-	 *****************************************************************************/
-	RetResult submit_sensor_data(const char *data, int data_size)
-	{
-		char url[URL_BUFFER_SIZE] = "";
-
-		TestUtils::print_stack_size();
-
-		// Get TB token to build URL
-		const DeviceDescriptor *device = Utils::get_device_descriptor();
-		snprintf(url, sizeof(url), TB_TELEMETRY_URL_FORMAT, TB_URL, device->tb_access_token);
-
-		Utils::print_separator(F("Submitting JSON"));
-		Serial.println(data);
-		Utils::print_separator(F("END JSON"));
-		
-		// Send REQ
-		RetResult ret = GSM::req(url, "POST", data, data_size, NULL, 0);
-		Serial.flush();
-
-		return ret;
-	}
-
-	/******************************************************************************
 	 * Handle logs submission
 	 * Read all logs, break into requests of X entries and submit
 	 *****************************************************************************/
@@ -291,15 +270,17 @@ namespace CallHome
 
 		DataStoreReader<Log::Entry> reader(Log::get_store());
 		const Log::Entry *entry = NULL;
-		LogJsonBuilder log_json;
+		TbLogJsonBuilder tb_log_json;
 		TbDiagnosticsJsonBuilder tb_diag_json;
-		
+
+		// Disable logs to avoid getting stuck in loop in case an error occurrs while
+		// accessing the file system to read the logs
+		Log::set_enabled(false);
+	
 		//
 		// Iterate all logs and submit. Each file in flash will fit in a single request.
 		// If request succeedes, file is deleted, if not it is left to be retried next time.
 		//
-		// NOTE: Using the log (eg. Log::log) while data is read from log, can cause unexpected
-		// behaviour. Do not use the log until after reading has finished.
 		while(reader.next_file())
 		{
 			cur_req_entries = 0;
@@ -317,18 +298,21 @@ namespace CallHome
 				cur_req_entries++;
 				submitted_entries++;
 
-				log_json.add(entry);
+				tb_log_json.add(entry);
 
 				// Add to tb diagnostics json builder
-				tb_diag_json.add(entry);
+				if(PUBLISH_TB_DIAGNOSTIC_TELEMETRY)
+				{
+					tb_diag_json.add(entry);
+				}
 			}
 
 			// Send logs only if there are valid entries to be sent
 			if(cur_req_entries > 0)
 			{
-				log_json.build(json_buff, LOG_JSON_OUTPUT_BUFF_SIZE, false);
+				tb_log_json.build(json_buff, LOG_JSON_OUTPUT_BUFF_SIZE, false);
 
-				if(submit_log_data(json_buff, strlen(json_buff)) == RET_OK)
+				if(submit_tb_telemetry(json_buff, strlen(json_buff)) == RET_OK)
 				{
 					// Request success, file can be deleted
 					reader.delete_file();
@@ -356,44 +340,51 @@ namespace CallHome
 				Utils::serial_style(STYLE_RESET);
 			}
 
-			// Send diagnostics logs to tb
-			if(!tb_diag_json.is_empty())
+			if(PUBLISH_TB_DIAGNOSTIC_TELEMETRY)
 			{
-				tb_diag_json.build(json_buff, LOG_JSON_OUTPUT_BUFF_SIZE, false);
-
-				Utils::serial_style(STYLE_CYAN);
-				Serial.print(F("Diag JSON: "));
-				Serial.println(json_buff);
-				Utils::serial_style(STYLE_RESET);
-
-				// Use same routine as with sensor data since its the same tb device
-				if(submit_sensor_data(json_buff, strlen(json_buff)) == RET_OK)
+				// Send diagnostics logs to tb
+				if(!tb_diag_json.is_empty())
 				{
-					Utils::serial_style(STYLE_BLUE);
-					Serial.println(F("Diagnostics submitted to TB."));
+					tb_diag_json.build(json_buff, LOG_JSON_OUTPUT_BUFF_SIZE, false);
+
+					Utils::serial_style(STYLE_CYAN);
+					Serial.println(F("Submitting diagnostics JSON: "));
 					Utils::serial_style(STYLE_RESET);
 
-					successfull_entries += cur_req_entries;
+					// Use same routine as with sensor data since its the same tb device
+					if(submit_tb_telemetry(json_buff, strlen(json_buff)) == RET_OK)
+					{
+						Utils::serial_style(STYLE_BLUE);
+						Serial.println(F("Diagnostics submitted to TB."));
+						Utils::serial_style(STYLE_RESET);
+
+						successfull_entries += cur_req_entries;
+					}
+					else
+					{
+						Utils::serial_style(STYLE_RED);
+						Serial.println(F("Could not submit diagnostics to TB."));
+						Utils::serial_style(STYLE_RESET);
+					}
 				}
 				else
 				{
-					Utils::serial_style(STYLE_RED);
-					Serial.println(F("Could not submit diagnostics to TB."));
+					Utils::serial_style(STYLE_CYAN);
+					Serial.println(F("No diagnostics to send."));
 					Utils::serial_style(STYLE_RESET);
 				}
-			}
-			else
-			{
-				Utils::serial_style(STYLE_CYAN);
-				Serial.println(F("No diagnostics to send."));
-				Utils::serial_style(STYLE_RESET);
+
+				// Empty packet and prepare for next
+				tb_log_json.reset();
 			}
 			
 
 			// Empty packet and prepare for next
-			log_json.reset();
 			tb_diag_json.reset();
 		}
+
+		// Reenable logging
+		Log::set_enabled(true);
 
 		// Print report
 		Utils::serial_style(STYLE_BLUE);
@@ -416,51 +407,38 @@ namespace CallHome
 	}
 
 	/******************************************************************************
-	 * Submit a single log data request to backend
-	 * @param data Buffer
+	 * Submit data to the TB telemetry API endpoint
+	 * @param data Buffer with json for TB
 	 * @param data_size Buffer size
 	 *****************************************************************************/
-	RetResult submit_log_data(const char *data, int data_size)
+	RetResult submit_tb_telemetry(const char *data, int data_size)
 	{
 		char url[URL_BUFFER_SIZE] = "";
 
-		// Get device id to build URL
+		// Get TB token to build URL
 		const DeviceDescriptor *device = Utils::get_device_descriptor();
-		snprintf(url, sizeof(url), BACKEND_LOG_URL_FORMAT, BACKEND_URL, device->id);
-		
+		snprintf(url, sizeof(url), TB_TELEMETRY_URL_FORMAT, device->tb_access_token);
+
+		Utils::print_separator(F("Submitting JSON"));
+		Serial.println(data);
+		Utils::print_separator(F("END JSON"));
+
 		// Send REQ
-		RetResult ret = GSM::req(url, "POST", data, data_size);
+		HttpRequest http_req(GSM::get_modem(), TB_SERVER);
+		http_req.set_port(TB_PORT);
 
-		return ret;
-	}
+		RetResult ret = http_req.post(url, (uint8_t*)data, data_size, "application/json", NULL, NULL);
+		Serial.flush();
 
-	/******************************************************************************
-	 * Submit diagnostic data to thingsboard
-	 *****************************************************************************/
-	RetResult handle_diagnostics()
-	{
-		// StaticJsonDocument<DIAGNOSTICS_JSON_DOC_SIZE> json_doc;
-		// char out_buff[DIAGNOTICS_JSON_OUTPUT_BUFF_SIZE] = "";
+		if(ret != RET_OK || http_req.get_response_code() != 200)
+		{
+			Utils::serial_style(STYLE_RED);
+			Serial.println(F("TB telemetry submission failed."));
+			Utils::serial_style(STYLE_RESET);
+			return RET_ERROR;
+		}
 
-		// json_doc.clear();
-		// JsonArray root_array = json_doc.template to<JsonArray>();
-
-		// JsonObject json_entry = root_array.createNestedObject();
-		// json_entry["ts"] = (long long)RTC::get_timestamp();
-		// JsonObject values = json_entry.createNestedObject("values");
-		
-		// values["a"] = 1;
-		// values["b"] = 2;
-		// values["c"] = 3;
-		// values["d"] = 4;
-
-		// serializeJsonPretty(json_doc, out_buff, sizeof(out_buff));
-
-
-
-		// Serial.println(F("Result JSON"));
-		// Serial.print(out_buff);
-	
+		return RET_OK;
 	}
 
 	/******************************************************************************
@@ -469,6 +447,46 @@ namespace CallHome
 	RetResult handle_remote_control()
 	{
 		return RemoteControl::start();
+	}
+
+	/******************************************************************************
+	 * Publish TB client attributes
+	 * Client attributes contain current device data that is not sent as telemetry
+	 * eg. fw version, current measure intervals etc.
+	 *****************************************************************************/
+	RetResult handle_client_attributes()
+	{
+		StaticJsonDocument<CLIENT_ATTRIBUTES_JSON_DOC_SIZE> json_doc;
+		char url[URL_BUFFER_SIZE_LARGE] = "";
+
+		// Devive token required for URL
+		const DeviceDescriptor *device = Utils::get_device_descriptor();
+		snprintf(url, sizeof(url), TB_CLIENT_ATTRIBUTES_URL_FORMAT, device->tb_access_token);
+
+		// Add keys
+		json_doc[TB_ATTR_CUR_FW_V] = FW_VERSION;
+		json_doc[TB_ATTR_CUR_WS_INT] = DeviceConfig::get_wakeup_schedule_reason_int(Sleep::REASON_READ_WATER_SENSORS);
+		json_doc[TB_ATTR_CUR_CH_INT] = DeviceConfig::get_wakeup_schedule_reason_int(Sleep::REASON_CALL_HOME);
+
+		serializeJson(json_doc, g_resp_buffer, sizeof(g_resp_buffer));
+
+		// Submit request
+		Serial.print(F("Submitting client attribute req: "));
+		Serial.println(g_resp_buffer);
+
+		HttpRequest http_req(GSM::get_modem(), TB_SERVER);
+		http_req.set_port(TB_PORT);
+		// TODO: Is it problematic to use same buffer for send/receive?
+		RetResult ret = http_req.post(url, (uint8_t*)g_resp_buffer, strlen(g_resp_buffer), "application/json", g_resp_buffer, sizeof(g_resp_buffer));
+
+		if(ret != RET_OK)
+		{
+			Serial.println(F("Could not publish client attributes."));
+			
+			Log::log(Log::TB_CLIENT_ATTR_PUBLISH_FAILED, http_req.get_response_code());
+		}
+
+		return ret;
 	}
 
 	/******************************************************************************

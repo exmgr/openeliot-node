@@ -2,25 +2,36 @@
 #include <string>
 #include "app_config.h"
 #include "const.h"
+#include <TinyGsmClient.h> // Must be after const.h where tiny gsm constants are set
 #include "gsm.h"
 #include "rtc.h"
 #include "struct.h"
 #include "utils.h"
 #include "log.h"
+#include <Wire.h>
+
+#define LOGGING 1
+#include <ArduinoHttpClient.h>
+
+#define _gsm_serial Serial1
 
 namespace GSM
 {
-
 //
 // Private vars
 //
-/** Hardware serial port to be used by the FONA lib */
-HardwareSerial _fona_serial(GSM_FONA_SERIAL_PORT);
-/** Fona lib object */
-Adafruit_FONA_LTE _fona = Adafruit_FONA_LTE();
-/** When serial communcation is established with fona, set to true. When OFF, set back to false.
- * Checking if(_fona_serial) doesn't seem to do anything */
-bool _fona_serial_open = false;
+/** Hardware serial port to be used by the GSM lib */
+// HardwareSerial _gsm_serial(GSM_SERIAL_PORT);
+
+/** TinyGSM instance */
+#if PRINT_GSM_AT_COMMS
+#include <StreamDebugger.h>
+/** StreamDebugger object to ouput communication between GSM module and MCU to serial console */
+StreamDebugger debugger(_gsm_serial, Serial);
+TinyGsm _modem(debugger);
+#else
+TinyGsm _modem(_gsm_serial);
+#endif
 
 //
 // Private functions
@@ -33,64 +44,65 @@ bool is_fona_serial_open();
  ******************************************************************************/
 void init()
 {
-    // Make sure its off
-    off();
+	pinMode(PIN_GSM_PWR_KEY, OUTPUT);
+	pinMode(PIN_GSM_RESET, OUTPUT);
+	pinMode(PIN_GSM_POWER_ON, OUTPUT);
+
+	// Make sure modem is off
+	off();
 }
 
 /*****************************************************************************
-* Power ON
+* Power ON and connect
 *****************************************************************************/
 RetResult on()
 {
-    int ret = 0, tries = 0;
+	Serial.print(F("GSM ON"));
+	Serial.println();
+	int time_delay = 500;
 
-    // Turn ON through DFRobot solar manager
-    digitalWrite(PIN_GSM_PWR, HIGH);
-    delay(500);    
+	#ifdef TCALL_H
+		// Turn IP5306 power boost OFF to reduce idle current
+		Utils::ip5306_set_power_boost_state(true);
+	#endif
+	
+	digitalWrite(PIN_GSM_RESET, HIGH);
+	delay(time_delay);
 
-    // If fona already open, calling begin on it again can cause problems
-    // Can fona serial become unavailable for some reason? Check if it is still there
-    if(!_fona_serial)
-    {
-        Serial.println(F("Fona serial begin."));
-        _fona_serial.begin(115200, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
-    }
-    else
-    {
-        Serial.println(F("Fona serial already open."));
-    }
+	// Make sure modem is OFF
+	// Serial.println("PIN_GSM_PWR_KEY: HIGH");
+	digitalWrite(PIN_GSM_PWR_KEY, HIGH);
 
-    // Change baud rate to 9600
-    Serial.println("Change baud rate to 9600.");
-    _fona_serial.println("AT+IPR=9600");
-    delay(100);
-    _fona_serial.begin(9600, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
-    delay(100);
+	// Enable SY8089 4V4 for SIM800 
+	// Serial.println("PIN_GSM_POWER_ON: HIGH");
+	digitalWrite(PIN_GSM_POWER_ON, HIGH);
+	delay(time_delay);
+	delay(time_delay);
 
-    // Serial comms have began
-    _fona_serial_open = true;
+	digitalWrite(PIN_GSM_PWR_KEY, LOW); // Turn modem ON
+	delay(time_delay);
 
-    //
-    // Start and configure fona
-    // Try X times before aborting
-    tries = GSM_TRIES;
-    do
-    {
-        Serial.println(F("Fona begin."));
-        if (!(ret = _fona.begin(_fona_serial)))
-        {
-            Serial.println(F("Couldn't connect to GSM module."));
-            return RET_ERROR;
-        }
-        else
-            break;
+	_gsm_serial.end(); // Could be related to meditation guru error
+	delay(10);
 
-    }while(--tries);
-    
-    if(!ret)
-        return RET_ERROR;
+	_gsm_serial.begin(GSM_SERIAL_BAUD, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
+	delay(3000);
 
-    return RET_OK;
+	//_modem.restart();
+	Serial.println("Modem init...");
+
+	if (!_modem.init())
+	{
+		Log::log(Log::GSM_INIT_FAILED);
+		Serial.println(F("Could not init."));
+		return RET_ERROR;
+	}
+
+	String modem_info = _modem.getModemInfo();
+	Serial.print(F("GSM module: "));
+	Serial.println(modem_info.c_str());
+
+	return RET_OK;
 }
 
 /*****************************************************************************
@@ -98,14 +110,16 @@ RetResult on()
 *****************************************************************************/
 RetResult off()
 {
-    // _fona.powerDown();
-    // delay(1000);
-    
-    digitalWrite(PIN_GSM_PWR, LOW);
+	digitalWrite(PIN_GSM_PWR_KEY, HIGH); // Turn off modem in case its ON from previous state
+	digitalWrite(PIN_GSM_POWER_ON, LOW); // turn off modem power in case its from previous state
+	digitalWrite(PIN_GSM_RESET, HIGH);   // Keep IRQ high anyway (or not to save power?)
 
-    _fona_serial_open = false;
+	#ifdef TCALL_H
+		// Turn IP5306 power boost OFF to reduce idle current
+		Utils::ip5306_set_power_boost_state(false);
+	#endif
 
-    return RET_OK;
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -113,164 +127,31 @@ RetResult off()
  *****************************************************************************/
 RetResult connect()
 {
-    Serial.println(F("Starting GSM."));
-    int tries = 0, ret = 0;
+	Serial.println(F("Initializing GSM"));
 
-    // Get fona type. Must be SIM7000E or SIM7000G
-    uint8_t type = _fona.type();
-    if (type == GSM_FONA_TYPE_SIM7000E || type == GSM_FONA_TYPE_SIM7000G)
-    {
-        Serial.println(F("Found SIM7000E/G"));
-    }
-    else
-    {
-        Serial.print(F("GSM module is not SIM7000E/G. Type: "));
-        Serial.println(type, DEC);
-        return RET_ERROR;
-    }
+	Serial.println(F("Waiting for network connection..."));
+	if (!_modem.waitForNetwork(GSM_DISCOVERY_TIMEOUT_MS))
+	{
+		Serial.println(F("Network discovery failed."));
+		Log::log(Log::GSM_NETWORK_DISCOVERY_FAILED);
+		return RET_ERROR;
+	}
 
-    // Print IMEI because we can
-    char imei[16] = {0};
-    if (_fona.getIMEI(imei))
-    {
-        Serial.print(F("IMEI: "));
-        Serial.println(imei);
-    }
+	Serial.println(F("GSM connected"));
 
-    // Set modem to full functionality
-    _fona.setFunctionality(1); // AT+CFUN=1
+	int8_t rssi = get_rssi();
+	Utils::serial_style(STYLE_BLUE);
+	Serial.print(F("RSSI: "));
+	Serial.println(rssi, DEC);
+	Utils::serial_style(STYLE_RESET);
 
-    // GSM/MBIoT mode
-    if(NBIOT_MODE)
-    {
-        Utils::serial_style(STYLE_BLUE);
-        Serial.println("NBIoT mode");
-        Utils::serial_style(STYLE_RESET);
+	if (enable_gprs(true) != RET_OK)
+	{
+		Log::log(Log::GSM_GPRS_CONNECTION_FAILED);
+		return RET_ERROR;
+	}
 
-        // Mode = NBIoT
-        _fona.setPreferredMode(38);
-        // LTE Mode = NBIoT
-        _fona.setPreferredLTEMode(2);
-        _fona.setOperatingBand("NB-IOT", 20);
-    }
-    else
-    {
-        Serial.println("GSM mode");
-        // GSM only
-        _fona.setPreferredMode(13);
-    }
-
-    // Set APN from device descriptor
-    const DeviceDescriptor *device_descriptor = Utils::get_device_descriptor();
-
-    Serial.print(F("Setting APN: "));
-    Serial.println(F(device_descriptor->apn));
-    _fona.setNetworkSettings(F(device_descriptor->apn));
-
-    _fona.setNetLED(true, 2, 500, 500);
-    // In debug mode led blinks slowly, else its disabled completely
-    // #ifdef DEBUG
-    //     // On/off, mode, timer_on, timer_off (on release, turn off completely)
-    //     _fona.setNetLED(true, 2, 500, 500);
-    // #else
-    //     // Disable network status LED
-    //     _fona.setNetLED(false);
-    // #endif
-    // END
-
-    //
-    // Connect to network
-    //
-    tries = GSM_TRIES;
-    bool success = false;
-    uint32_t discovery_start_time = millis();
-
-    // Check for network status change every X ms
-    // If not connected within X seconds, connection failed
-    Serial.println(F("Connecting to network."));
-    while(millis() - discovery_start_time < GSM_DISCOVERY_TIMEOUT_MS)
-    {
-        if(_fona.getNetworkStatus() != 1 && _fona.getNetworkStatus() != 5)
-        {
-            Serial.print(".");
-            delay(500);
-        }
-        else
-        {
-            success = true;
-            break;
-        }
-    }
-
-    if(!success)
-    {
-        Serial.println(F("Connection failed."));
-
-		Log::log(Log::GSM_CONNECT_FAILED);
-        return RET_ERROR;
-    }
-    else
-    {
-        Serial.println(F("Network connected!"));
-    }
-
-    int8_t rssi = get_rssi();;
-    Utils::serial_style(STYLE_BLUE);
-    Serial.print(F("RSSI: "));
-    Serial.println(rssi, DEC);
-    Utils::serial_style(STYLE_RESET);
-
-    // Adafruit says to wait a few secs for stabilization (?)
-    delay(3000);
-
-    // END
-
-    //
-    // Enable GPRS
-    //
-    if(_fona.GPRSstate() == 1)
-    {
-        Serial.println("GPRS already enabled");
-    }
-    else
-    {
-        Serial.println(F("Enabling GPRS."));
-        tries = GSM_TRIES;
-        while(tries--)
-        {
-
-            if(!(ret = _fona.enableGPRS(true)))
-            {
-                Serial.println(F("Could not enable GPRS"));
-
-                if(tries)
-                {
-                    Serial.println(F("Disabling GPRS and retrying."));
-                }
-            }
-            else
-                break;
-
-            // Disable GPRS before reenabling
-            _fona.enableGPRS(false);
-        }
-
-        if(!ret)
-        {
-            Serial.println(F("Could not enable GPRS. Aborting."));
-            return RET_ERROR;
-        }
-        else
-        {
-            Serial.println(F("GPRS enabled."));
-        }
-    }
-
-    Serial.println(F("Connected."));
-
-    // END
-
-    return RET_OK;
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -279,37 +160,37 @@ RetResult connect()
  ******************************************************************************/
 RetResult connect_persist()
 {
-    int tries = GSM_TRIES;
-    int success = false;
+	int tries = GSM_TRIES;
+	int success = false;
 
-    // Try to connect X times before aborting, power cycling in between
-    while(tries--)
-    {
-        if(connect() == RET_ERROR)
-        {
-            Serial.print(F("Connection failed."));
+	// Try to connect X times before aborting, power cycling in between
+	while (tries--)
+	{
+		if (connect() == RET_ERROR)
+		{
+			Serial.print(F("Connection failed. "));
 
-            if(tries)
-            {
-                Serial.println(F("Cycling power and retrying."));
-            }
-            power_cycle();
-        }
-        else
-        {
-            success = true;
-            break;
-        }   
-    }
+			if (tries)
+			{
+				Serial.println(F("Cycling power and retrying."));
+			}
+			power_cycle();
+		}
+		else
+		{
+			success = true;
+			break;
+		}
+	}
 
-    if(!success)
-    {
-        Serial.println(F("Could not connect. Aborting."));
+	if (!success)
+	{
+		Serial.println(F("Could not connect. Aborting."));
 
-        return RET_ERROR;
-    }
-    else
-        return RET_OK;
+		return RET_ERROR;
+	}
+	else
+		return RET_OK;
 }
 
 /*****************************************************************************
@@ -317,9 +198,9 @@ RetResult connect_persist()
 *****************************************************************************/
 void power_cycle()
 {
-    digitalWrite(PIN_GSM_PWR, LOW);
-    delay(500);
-    digitalWrite(PIN_GSM_PWR, HIGH);
+	off();
+	delay(500);
+	on();
 }
 
 /*****************************************************************************
@@ -327,18 +208,20 @@ void power_cycle()
 *****************************************************************************/
 RetResult update_ntp_time()
 {
-    Serial.print(F("Updating time from: "));
-    Serial.println(NTP_SERVER);
+	Serial.print(F("Updating time from: "));
+	Serial.println(NTP_SERVER);
 
-    // Toggle GPRS to make sure it returns NTP time and not GSM time
-    enable_gprs(false);
-    if(enable_gprs(true) != RET_OK)
-       return RET_ERROR;
+	// Toggle GPRS to make sure it returns NTP time and not GSM time
+	// enable_gprs(false);
+	// if (enable_gprs(true) != RET_OK)
+	// 	return RET_ERROR;
 
-    if(!_fona.enableNTPTimeSync(true, F(NTP_SERVER)))
-        return RET_ERROR;
+	if (_modem.NTPServerSync(F(NTP_SERVER), 0) == -1)
+	{
+		return RET_ERROR;
+	}
 
-    return RET_OK;
+	return RET_OK;
 }
 
 /*****************************************************************************
@@ -346,41 +229,41 @@ RetResult update_ntp_time()
 *****************************************************************************/
 RetResult get_time(tm *out)
 {
-    if(!is_fona_serial_open())
-    {
-        return RET_ERROR;
-    }
+	char buff[26] = "";
 
-    char buff[26] = "";
+	// Returned format: "30/08/87,05:49:54+00"
+	String date_time = _modem.getGSMDateTime(DATE_FULL);
 
-    // Returned format: "30/08/87,05:49:54+00"
-    if(!_fona.getTime(buff, sizeof(buff)))
-    {
-        Serial.println(F("Could not get time from FONA."));
-        return RET_ERROR;
-    }
+	Serial.print(F("Got time: "));
+	Serial.println(date_time.c_str());
 
-    if(0 == sscanf(buff, "\"%02d/%02d/%02d,%02d:%02d:%02d",
-        &(out->tm_year), &(out->tm_mon), &(out->tm_mday),
-        &(out->tm_hour), &(out->tm_min), &(out->tm_sec)))
-    {
-        Serial.print(F("Could not parse FONA time: "));
-        Serial.println(buff);
+	if (date_time.length() < 1)
+	{
+		Serial.println(F("Could not get time from GSM."));
+		return RET_ERROR;
+	}
 
-        // 0 vars parsed
-        return RET_ERROR;
-    }
+	if (0 == sscanf(date_time.c_str(), "%02d/%02d/%02d,%02d:%02d:%02d",
+					&(out->tm_year), &(out->tm_mon), &(out->tm_mday),
+					&(out->tm_hour), &(out->tm_min), &(out->tm_sec)))
+	{
+		Serial.print(F("Could not parse FONA time: "));
+		Serial.println(buff);
 
-    // Year in GSM module counts from 2000, must count from 1900
-    out->tm_year += 100;
-    // Month in GSM module counts from 01, must count from 00
-    out->tm_mon--;
+		// 0 vars parsed
+		return RET_ERROR;
+	}
 
-    time_t gsm_epoch = mktime(out);
-    Serial.print(F("Parsed time in GSM module: "));
-    Serial.println(ctime(&gsm_epoch));
+	// Year in GSM module counts from 2000, must count from 1900
+	out->tm_year += 100;
+	// Month in GSM module counts from 01, must count from 00
+	out->tm_mon--;
 
-    return RET_OK;
+	time_t gsm_epoch = mktime(out);
+	Serial.print(F("Parsed time in GSM module: "));
+	Serial.println(ctime(&gsm_epoch));
+
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -388,10 +271,31 @@ RetResult get_time(tm *out)
  *****************************************************************************/
 RetResult enable_gprs(bool enable)
 {
-    if(_fona.enableGPRS(enable))
-        return RET_OK;
-    else
-        return RET_ERROR;
+	if (enable)
+	{
+		// Get APN from device descriptor
+		const DeviceDescriptor *device_descriptor = Utils::get_device_descriptor();
+		Serial.print(F("Connecting to APN: "));
+		Serial.println(device_descriptor->apn);
+
+		if (!_modem.gprsConnect(device_descriptor->apn, "", ""))
+		{
+			Serial.println(F("Could not connect GPRS."));
+			return RET_ERROR;
+		}
+	}
+	else
+	{
+		if (!_modem.gprsDisconnect())
+		{
+			Serial.println(F("Could not disable GPRS."));
+			return RET_ERROR;
+		}
+	}
+
+	Serial.println(F("GPRS connected."));
+
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -400,202 +304,61 @@ RetResult enable_gprs(bool enable)
 ******************************************************************************/
 int get_rssi()
 {
-    if(!is_fona_serial_open())
-        return 0;
+	// TODO: Check if serial is open else get exception
 
-    uint8_t rssi_sim = _fona.getRSSI();
-    int8_t rssi = 0;
-    
-    if(rssi_sim == 0)
-        rssi = -115;
-    if(rssi_sim == 1)
-        rssi = -111;
-    if(rssi_sim == 31)
-        rssi = -52;
-    if((rssi_sim >= 2) && (rssi_sim <= 30))
-        rssi = map(rssi_sim, 2, 30, -110, -54);
+	uint16_t rssi_sim = _modem.getSignalQuality();
+	int16_t rssi = 0;
 
-    return rssi;
+	if (rssi_sim == 0)
+		rssi = -115;
+	if (rssi_sim == 1)
+		rssi = -111;
+	if (rssi_sim == 31)
+		rssi = -52;
+	if ((rssi_sim >= 2) && (rssi_sim <= 30))
+		rssi = map(rssi_sim, 2, 30, -110, -54);
+
+	return rssi;
 }
 
 /******************************************************************************
  * Get battery info from module
  * @param 
  *****************************************************************************/
-RetResult get_battery_info(uint16_t* voltage, uint16_t* pct)
+RetResult get_battery_info(uint16_t *voltage, uint16_t *pct)
 {
-    if(!is_fona_serial_open())
-    {
-        return RET_ERROR;
-    }
+	if (!(*voltage = _modem.getBattVoltage()))
+	{
+		*voltage = 0;
+		Serial.println(F("Could not read voltage from GSM module"));
+		return RET_ERROR;
+	}
+	
 
-    if(!_fona.getBattVoltage(voltage))
-    {
-        Serial.println(F("Could not read voltage from GSM module"));
-        return RET_ERROR;
-    }
-
-    if(!_fona.getBattPercent(pct))
-    {
-        Serial.println(F("Could not read battery pct from GSM module."));
-        return RET_ERROR;
-    }
-
-    return RET_OK;
+	if (!(*pct = _modem.getBattPercent()))
+	{
+		*pct = 0;
+		Serial.println(F("Could not read battery pct from GSM module."));
+		return RET_ERROR;
+	}
+	
+	return RET_OK;
 }
 
 /******************************************************************************
- * Check if SIM card present by querying
+ * Check if SIM card present by checking if its ready
  *****************************************************************************/
 bool sim_card_present()
 {
-    char ccid[32] = "";
-
-    // Bug in fona: module returns CME ERROR: 10 when sim card not present and fona
-    // instead of returning len=0, returns 6 because it slices the error into "0R: 10"
-    uint8_t len = _fona.getSIMCCID(ccid);
-
-    return len < 10 ? false : true;
+	return _modem.getSimStatus() == SIM_READY;
 }
 
 /******************************************************************************
- * Return true if fona serial port has been set up and communications established
- * Used to check if it is OK to talk to Fona. Talking to fona without checking
- * this might result in eceptions/
+ * Get TinyGsm object
  *****************************************************************************/
-bool is_fona_serial_open()
+TinyGsm *get_modem()
 {
-    return _fona_serial_open;
+	return &_modem;
 }
-
-/*****************************************************************************
-* Do a GET/POST request. If fails, toggle GPRS and retry
-*****************************************************************************/
-RetResult req(const char *url, const char *method, const char *req_data, int req_data_size, 
-            char *resp_buffer, int resp_buffer_size)
-{
-    int tries = GSM_TRIES;
-    int ret = 0;
-
-    while(tries--)
-    {
-        if(!(ret = _fona.postData(method, url, req_data, "", req_data_size)))
-        {
-            Serial.println("Request failed. ");
-
-            if(tries - 1)
-            {
-                Serial.println(F("Toggling GPRS and retrying..."));
-                enable_gprs(false);
-                delay(GSM_RETRY_DELAY_MS);
-                enable_gprs(true);
-                delay(GSM_RETRY_DELAY_MS);
-            }
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    if(!ret)
-    {
-        Serial.println(F("Aborting"));
-        return RET_ERROR;
-    }
-    
-    Serial.println(F("Request success."));
-
-    //
-    // Get response
-    //
-    if(resp_buffer != NULL && resp_buffer_size > 1)
-    {      
-        Serial.println(F("Reading buffer"));
-
-        delay(2000);
-        
-        while(_fona.available())
-        {
-            Serial.print("-");
-            char c = _fona.read();
-            Serial.print(c);
-            Serial.println();
-        }
-
-        // Read 1 byte less, leave space for null termination
-        // int read_bytes = fona.readBytes(resp_buffer, resp_buffer_size - 1);
-
-        // Serial.print(F("Read bytes: "));
-        // Serial.println(read_bytes, DEC);
-
-        // Null terminate
-        // resp_buffer[read_bytes] = '\0';
-
-        // Serial.print(F("BUffer: "));
-        // Serial.println(resp_bufferl);
-    }
-
-    return RET_OK;
-}
-
-/******************************************************************************
-* Do a GET request
-******************************************************************************/
-RetResult get_req(char *url, uint16_t *status_code, uint16_t *resp_len, char *resp_buff, int resp_buff_size)
-{
-    if(!is_fona_serial_open)
-    {
-        return RET_ERROR;
-    }
-
-    int tries = GSM_TRIES;
-    int ret = 0;
-
-    while(tries--)
-    {
-        if(!(ret = _fona.HTTP_GET_start(url, status_code, resp_len)))
-        {
-            Serial.println("Request failed. ");
-
-            if(tries - 1)
-            {
-                Serial.println(F("Toggling GPRS and retrying..."));
-                enable_gprs(false);
-                delay(GSM_RETRY_DELAY_MS);
-                enable_gprs(true);
-                delay(GSM_RETRY_DELAY_MS);
-            }
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    if(!ret)
-    {
-        Serial.println(F("Aborting"));
-        return RET_ERROR;
-    }
-
-    if(*resp_len < 1)
-        return RET_ERROR;
-
-    // Maximum amount of bytes to read is the smallest of: buffer size and actual response length
-    // Treat output buffer size as 1 char smaller than provided, to make space for termination char
-    int bytes_to_read = resp_buff_size - 1;
-    if(bytes_to_read > *resp_len)
-        bytes_to_read = *resp_len;
-
-    int bytes_read = _fona.readBytes(resp_buff, bytes_to_read);
-
-    _fona.HTTP_GET_end();
-
-    resp_buff[bytes_read] = '\0';
-
-    return RET_OK;
-}
-
 
 } // namespace GSM

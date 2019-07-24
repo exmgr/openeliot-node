@@ -16,9 +16,14 @@ namespace SensorData
     * Add water sensor data to storage
 	* No packet is added without having its CRC updated first
     ******************************************************************************/
-    bool add(SensorData::Entry *data)
+    RetResult add(SensorData::Entry *data)
     {
-        return store.add(data);
+		RetResult ret = store.add(data);
+
+		// Commit on every add
+		store.commit();
+
+        return ret;
     }   
 
     /******************************************************************************

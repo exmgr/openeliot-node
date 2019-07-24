@@ -22,8 +22,12 @@ namespace DeviceConfig
 		clean_reboot: false,
 		wakeup_schedule: {},
 
-		apply_remote_control_on_boot: false,
-		remote_control_data: RemoteControl::Data(0, 0, 0, 0)
+		ota_flashed: false,
+
+		last_rc_data_id: 0
+
+		/** Last received/
+		last_remote_control_data: RemoteControl::Data(0, 0, 0, 0) */
 	};
 	
 	/** Currently loaded config. Struct is kept up to date every time new config is set */
@@ -99,8 +103,6 @@ namespace DeviceConfig
 	******************************************************************************/
 	const Data* get()
 	{
-		RetResult ret = RET_ERROR;
-
 		return &_current_config;
 	}
 
@@ -169,7 +171,7 @@ namespace DeviceConfig
 			{
 				Serial.println(F("Config failed CRC32 check. Loading aborted."));
 
-				Log::log(Log::CONFIG_DATA_CRC_ERRORS);
+				Log::log(Log::DEVICE_CONFIG_DATA_CRC_ERRORS);
 
 				ret = RET_ERROR;
 			}
@@ -210,7 +212,7 @@ namespace DeviceConfig
 
 		// Copy defaults struct to current
 		memcpy(&_current_config, &DEVICE_CONFIG_DEFAULT, sizeof(DEVICE_CONFIG_DEFAULT));
-		// Copy wake up schedule to current
+		// Copy default wake up schedule to current
 		set_wakeup_schedule((Sleep::WakeupScheduleEntry*) &WAKEUP_SCHEDULE_DEFAULT);
 
 		commit();
@@ -223,17 +225,27 @@ namespace DeviceConfig
 	******************************************************************************/
 	void print(const Data *data)
 	{
+		Utils::print_separator(F("DEVICE CONFIG"));
+	
 		Serial.print(F("CRC32: "));
 		Serial.println(data->crc32, DEC);
 
 		Serial.print(F("Clean reboot: "));
 		Serial.println(data->clean_reboot, DEC);
 
-		Serial.print(F("Apply remote control: "));
-		Serial.println(data->apply_remote_control_on_boot, DEC);
+		Serial.print(F("OTA flashed: "));
+		Serial.println(data->ota_flashed, DEC);
 
-		Serial.println(F("Remote control data:"));
-		RemoteControl::print(&(data->remote_control_data));
+		Serial.print(F("Last remote config data id: "));
+		Serial.println(data->last_rc_data_id);
+
+		Serial.print(F("Water sensors measure interval (mins): "));
+		Serial.println(get_wakeup_schedule_reason_int(Sleep::WakeupReason::REASON_READ_WATER_SENSORS), DEC);
+
+		Serial.print(F("Calling home interval (mins): "));
+		Serial.println(get_wakeup_schedule_reason_int(Sleep::WakeupReason::REASON_CALL_HOME), DEC);
+
+		Utils::print_separator(NULL);
 	}
 
 	/******************************************************************************
@@ -245,7 +257,7 @@ namespace DeviceConfig
 	}
 
 	/******************************************************************************
-	* Accessors
+	* Basic accessors
 	******************************************************************************/
 	RetResult set_clean_reboot(bool val)
 	{
@@ -258,12 +270,17 @@ namespace DeviceConfig
 		return _current_config.clean_reboot;
 	}
 
-	RetResult set_apply_remote_control(bool val)
+	RetResult set_ota_flashed(bool val)
 	{
-		_current_config.apply_remote_control_on_boot = val;
+		_current_config.ota_flashed = val;
 		
 		return RET_OK;
 	}
+	bool get_ota_flashed()
+	{
+		return _current_config.ota_flashed;
+	}
+
 	RetResult set_wakeup_schedule(const Sleep::WakeupScheduleEntry *schedule)
 	{
 		memcpy(_current_config.wakeup_schedule, schedule, sizeof(_current_config.wakeup_schedule));
@@ -274,6 +291,7 @@ namespace DeviceConfig
 	******************************************************************************/
 	RetResult set_wakeup_schedule_reason_int(Sleep::WakeupReason reason, int int_mins)
 	{
+		// TODO: Check for min/max values should be done here instead only when received by remote config?
 		for(int i = 0; i < WAKEUP_SCHEDULE_LEN; i++)
 		{
 			if(_current_config.wakeup_schedule[i].reason == reason)
@@ -289,7 +307,7 @@ namespace DeviceConfig
 	}
 
 	/******************************************************************************
-	* Find a reason in the sleep schedule and update its interval
+	* Find a reason in the sleep schedule return its interval
 	******************************************************************************/
 	int get_wakeup_schedule_reason_int(Sleep::WakeupReason reason)
 	{
@@ -297,7 +315,7 @@ namespace DeviceConfig
 		{
 			if(_current_config.wakeup_schedule[i].reason == reason)
 			{
-				return _current_config.wakeup_schedule[i].reason;
+				return _current_config.wakeup_schedule[i].interval_mins;
 			}
 		}
 
@@ -305,18 +323,19 @@ namespace DeviceConfig
 		return -1;
 	}
 
+
 	/******************************************************************************
-	* Set remote control data structure
-	******************************************************************************/
-	RetResult set_remote_control_data(const RemoteControl::Data *new_data)
+	 * Last remote config data id
+	 *****************************************************************************/
+	int get_last_rc_data_id()
 	{
-		memcpy(&_current_config.remote_control_data, new_data, sizeof(RemoteControl::Data));
+		return _current_config.last_rc_data_id;
+	}
+
+	RetResult set_last_rc_data_id(int id)
+	{
+		_current_config.last_rc_data_id = id;
+
 		return RET_OK;
 	}
-
-	const RemoteControl::Data* get_remote_control_data()
-	{
-		return &_current_config.remote_control_data;
-	}
-
 }

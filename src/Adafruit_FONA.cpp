@@ -18,9 +18,6 @@
 
 #include "Adafruit_FONA.h"
 
-
-
-
 Adafruit_FONA::Adafruit_FONA(int8_t rst)
 {
   _rstpin = rst;

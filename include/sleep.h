@@ -35,6 +35,7 @@ namespace Sleep
         int *sleep_mins_out, int *next_reasons_out);
 
     bool wakeup_reason_is(WakeupReason reason);
+    void print_schedule(Sleep::WakeupScheduleEntry schedule[]);
 }
 
 #endif

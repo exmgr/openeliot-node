@@ -8,6 +8,7 @@
 #include "sys/time.h"
 #include "log.h"
 #include "utils.h"
+#include "http_request.h"
 
 namespace RTC
 {
@@ -26,7 +27,7 @@ namespace RTC
     RetResult init()
     {
         RetResult ret = RET_OK;
-        if(USE_EXTERNAL_RTC)
+        if(EXTERNAL_RTC_ENABLED)
         {
             ret = init_external_rtc();
         }
@@ -43,17 +44,22 @@ namespace RTC
      * 3. Update system time from external RTC (if enabled and returned value valid)
      * 4. Update system time from GSM module RTC which has GSM time (because NTP failed)
      * 
+     * Note: Requires GSM to be ON
+     * 
      * @return RET_ERROR if all of the above methods failed, and there is no valid
      *                   system time
      *****************************************************************************/
     RetResult sync()
     {
+        Serial.println(F("Syncing RTC"));
+
+        // For log
+        uint32_t tstamp_before_sync = get_timestamp();
+
         RetResult ret = RET_ERROR;
         
         // No need to update external RTC because this is where we got the time from
         bool update_ext_rtc = true;
-
-        GSM::on();
         
         if(GSM::connect_persist() == RET_OK)
         {
@@ -70,11 +76,17 @@ namespace RTC
                 }
                 else
                 {
-                    Serial.println(F("Synctime time from NTP failed."));
+					Utils::serial_style(STYLE_RED);
+                    Serial.println(F("Sync time time from GSM rtc failed."));
+					Utils::serial_style(STYLE_RESET);
                 }
             }
             else
             {
+				Utils::serial_style(STYLE_RED);
+				Serial.println(F("Sync time time from NTP failed."));
+				Utils::serial_style(STYLE_RESET);
+
                 // Get time from plain HTTP
                 if(sync_time_from_http() == RET_OK)
                 {
@@ -88,7 +100,7 @@ namespace RTC
                     Serial.println(F("Synctime time from HTTP failed."));
 
                     // Get time from external RTC (if enabled)
-                    if(USE_EXTERNAL_RTC && sync_time_from_ext_rtc() == RET_OK)
+                    if(EXTERNAL_RTC_ENABLED && sync_time_from_ext_rtc() == RET_OK)
                     {
                         Utils::serial_style(STYLE_BLUE);
                         Serial.println(F("System time synced with external RTC."));
@@ -121,7 +133,7 @@ namespace RTC
         else
         {
             // Get time from external RTC (if enabled)
-            if(USE_EXTERNAL_RTC && sync_time_from_ext_rtc() == RET_OK)
+            if(EXTERNAL_RTC_ENABLED && sync_time_from_ext_rtc() == RET_OK)
             {
                 update_ext_rtc = false;
                 ret = RET_OK;
@@ -132,14 +144,14 @@ namespace RTC
             }
         }
 
-        GSM::off();
-
         // If time didn't come from external RTC, then update RTC from system time
         // (only if getting time succeeded)
-        if(USE_EXTERNAL_RTC && update_ext_rtc && ret == RET_OK)
+        if(EXTERNAL_RTC_ENABLED && update_ext_rtc && ret == RET_OK)
         {
             set_external_rtc_time(time(NULL));
         }
+
+        Log::log(Log::RTC_SYNC, tstamp_before_sync);
 
         return ret;
     }
@@ -211,33 +223,16 @@ namespace RTC
         if(ret != RET_OK)
             return ret;
 
+		uint32_t timestamp = mktime(&tm_now);
+		
+		if(!tstamp_valid(timestamp))
+		{
+			Serial.println(F("GSM time invalid."));
+			return RET_ERROR;
+		}
+
         if(set_system_time(mktime(&tm_now)) == RET_ERROR)
-        {
             return RET_ERROR;
-        }
-
-        return RET_OK;
-
-        // //
-        // // Update external RTC
-        // //
-        // if(USE_EXTERNAL_RTC)
-        // {
-        //     if(init_external_rtc() == RET_OK)
-        //     {
-        //         Serial.print(F("Updating external RTC from GSM: "));
-        //         Serial.println(time(NULL));
-
-        //         if(set_external_rtc_time(time(NULL)) != RET_OK)
-        //         {
-        //             Serial.println(F("Could not update external RTC time."));    
-        //         }
-        //     }
-        //     else
-        //     {
-        //         Serial.println(F("Could not init external RTC"));
-        //     }
-        // }
       
         return RET_OK;
     }
@@ -249,15 +244,30 @@ namespace RTC
     * Keeps track of time it took for the req to execute, to offset final timestamp
     * and obtain semi-accurate time
     ******************************************************************************/
-    RetResult sync_time_from_http()
+   	RetResult sync_time_from_http()
     {
         Serial.println(F("Syncing time from HTTP"));
 
+		// Fir cakcykatubg iffset
         uint32_t start_time_ms = millis(), end_time_ms = 0;
 
+		// Response info
         char resp[20] = "";
         uint16_t status_code = 0, resp_len = 0;
-        if(GSM::get_req((char*)HTTP_TIME_SYNC_URL, &status_code, &resp_len, resp, sizeof(resp)) == RET_ERROR)
+
+		// Break URL into parts
+		int port = 0;
+		char url_host[URL_HOST_BUFFER_SIZE] = "";
+		char url_path[URL_BUFFER_SIZE] = "";
+		if(Utils::url_explode((char*)HTTP_TIME_SYNC_URL, &port, url_host, sizeof(url_host), url_path, sizeof(url_path)) == RET_ERROR)
+		{
+			Serial.println(F("Invalid HTTP time sync url."));
+			return RET_ERROR;
+		}
+
+		// Request
+        HttpRequest http_req(GSM::get_modem(), url_host);
+        if(http_req.get(url_path, resp, sizeof(resp)) == RET_ERROR)
         {
             Serial.println(F("HTTP request failed"));
             return RET_ERROR;
@@ -280,13 +290,14 @@ namespace RTC
         unsigned long timestamp = 0;
         sscanf(resp, "%u", &timestamp);
 
+		// Calculate offset
         int offset_sec = round((float)(end_time_ms - start_time_ms) / 1000);
         Serial.print(F("Offsetting timestamp to compensate for req time (s): "));
         Serial.println(offset_sec, DEC);
 
         timestamp -= offset_sec;
 
-        if(timestamp < FAIL_CHECK_TIMESTAMP)
+        if(!tstamp_valid(timestamp))
         {
             Serial.print(F("Invalid timestamp received or resp. not a timestamp: "));
             Serial.println(timestamp, DEC);
@@ -311,7 +322,7 @@ namespace RTC
     {
         uint32_t ext_rtc_tstamp = _ext_rtc.GetDateTime().Epoch32Time();
 
-        if(ext_rtc_tstamp < FAIL_CHECK_TIMESTAMP)
+        if(!tstamp_valid(ext_rtc_tstamp))
         {
             Serial.print(F("Got invalid timestamp from ext rtc: "));
             Serial.println(ext_rtc_tstamp, DEC);
@@ -459,6 +470,29 @@ namespace RTC
     }
 
     /******************************************************************************
+     * Get external2 RTC temperature
+     *****************************************************************************/
+    float get_external_rtc_temp()
+    {
+        // Force compensation update to force sensor to update temp
+        _ext_rtc.ForceTemperatureCompensationUpdate(false);
+
+        // Wait for measurement to update because calling func with blocking mode has no
+        // timeout and can freeze the system (A+ quality arduino libraries)
+        delay(200);
+
+        return _ext_rtc.GetTemperature().AsFloatDegC();
+    }
+
+    /******************************************************************************
+    * Check timestamp for validity by comparing to a recent tstamp
+    ******************************************************************************/
+    bool tstamp_valid(uint32_t tstamp)
+    {
+        return tstamp > FAIL_CHECK_TIMESTAMP;
+    }
+
+    /******************************************************************************
      * Print current time to serial output
      *****************************************************************************/
     void print_time()
@@ -470,5 +504,9 @@ namespace RTC
         Serial.print("(");
         Serial.print(cur_tstamp, DEC);
         Serial.println(")");
-    }
+    
+        Serial.print("RTC Temperature: ");
+        Serial.print((int) _ext_rtc.GetTemperature().AsFloatDegC());
+        Serial.println("C");	
+	}
 }

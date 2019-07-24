@@ -3,7 +3,12 @@
 
 #include "app_config.h"
 #include "struct.h"
-#include "data_store.h"
-#include "sensor_data.h"
+#include "const.h"
+
+/**
+ * Large global buffer to be used for receiving large responses to http reqs.
+ * Global to avoid polluting the stack
+ */
+extern char g_resp_buffer[GLOBAL_HTTP_RESPONSE_BUFFER_LEN];
 
 #endif

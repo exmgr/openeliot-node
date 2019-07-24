@@ -14,36 +14,6 @@ namespace WaterQualitySensor
      ******************************************************************************/
     RetResult init()
     {
-        off();
-
-        return RET_OK;
-    }
-
-    /******************************************************************************
-     * Turn sensor ON
-     * Powers both the water quality sensor and the SDI12 adapter ON
-     ******************************************************************************/
-    RetResult on()
-    {
-        digitalWrite(PIN_WATER_QUALITY_PWR, 1);
-
-        Serial.println(F("Water quality sensor ON."));
-
-        delay(WATER_QUALITY_BOOT_DELAY);
-
-        return RET_OK;
-    }
-
-    /******************************************************************************
-     * Turn sensor OFF
-     * Powers both the water quality sensor and the SDI12 adapter OFF
-     ******************************************************************************/
-    RetResult off()
-    {
-        digitalWrite(PIN_WATER_QUALITY_PWR, 0 );
-
-        Serial.println(F("Water quality sensor OFF."));
-
         return RET_OK;
     }
 
@@ -131,11 +101,12 @@ namespace WaterQualitySensor
         }
 
 
-        // TODO: Use RTC GPIO so power pin  can stay high and ESP32 can sleep instead of waiting
+        // TODO: 
+        // When sleeping, pins go low and sensor is disabled.
+        // Use RTC GPIO so power pin  can stay high and ESP32 can sleep instead of waiting
         Serial.print(F("Waiting (sec): "));
         Serial.println(secs_to_wait + WATER_QUALITY_MEASURE_EXTRA_WAIT_SECS);
         delay((secs_to_wait + WATER_QUALITY_MEASURE_EXTRA_WAIT_SECS) * 1000);
-
 
         /*
         // Sleep requested number of seconds with an added tolerance

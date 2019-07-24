@@ -4,10 +4,6 @@
 
 namespace WaterLevel
 {
-	RetResult on();
-	
-	RetResult off();
-
 	RetResult init();
 
 	RetResult measure(SensorData::Entry *data);

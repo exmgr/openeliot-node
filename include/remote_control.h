@@ -30,12 +30,6 @@ namespace RemoteControl
 
 	RetResult start();
 
-	RetResult handle_user_config(Data data);
-
-	RetResult handle_ota(Data data);
-
-	RetResult handle_reboot(Data data);
-
 	bool get_reboot_pending();
 	void set_reboot_pending(bool val);
 

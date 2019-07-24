@@ -1,5 +1,5 @@
-#ifndef TB_SENSOR_DATA_H
-#define TB_SENSOR_DATA_H
+#ifndef TB_SENSOR_DATA_JSON_BUILDER_H
+#define TB_SENSOR_DATA_JSON_BUILDER_H
 
 #include "struct.h"
 #include "const.h"

@@ -10,7 +10,8 @@ namespace CallHome
 
     // TODO: Temp public for testing
     RetResult handle_remote_control();
-    RetResult handle_diagnostics();
+    RetResult handle_client_attributes();
+    RetResult handle_logs();
 }
 
 #endif

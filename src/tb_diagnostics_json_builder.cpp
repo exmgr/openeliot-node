@@ -13,14 +13,17 @@ RetResult TbDiagnosticsJsonBuilder::add(const Log::Entry *entry)
 	}
 
 	JsonObject json_entry = _root_array.createNestedObject();
-	json_entry["ts"] = (long long)entry->timestamp * 1000;
+	json_entry["ts"] = entry->timestamp;
 	JsonObject values = json_entry.createNestedObject("values");
 
 	// Fill value depending on code
 	switch(entry->code)
 	{
-	case Log::GSM_CONNECT_FAILED:
+	case Log::GSM_NETWORK_DISCOVERY_FAILED:
 		values["d_gsm_conn_fail"] = 1;
+		break;
+	case Log::GSM_GPRS_CONNECTION_FAILED:
+		values["d_gprs_conn_fail"] = 1;
 		break;
 	case Log::GSM_RSSI:
 		// RSSI in dBm
@@ -91,7 +94,8 @@ bool TbDiagnosticsJsonBuilder::is_telemetry_code(Log::Code code)
 	// All valid telemetry log codes
 	Log::Code valid_codes[] = {
 		Log::BOOT,
-		Log::GSM_CONNECT_FAILED,
+		Log::GSM_NETWORK_DISCOVERY_FAILED,
+		Log::GSM_GPRS_CONNECTION_FAILED,
 		Log::GSM_RSSI,
 		Log::NTP_TIME_SYNC_FAILED,
 		Log::SLEEP,

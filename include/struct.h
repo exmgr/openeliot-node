@@ -48,5 +48,15 @@ enum RetResult
     RET_ERROR = 1
 };
 
+/**
+ * Water Level sensor input channels
+ */
+enum WaterLevelChannel
+{
+    WATER_LEVEL_CHANNEL_PWM = 1,
+    WATER_LEVEL_CHANNEL_ANALOG,
+    WATER_LEVEL_CHANNEL_SERIAL
+};
+
 
 #endif

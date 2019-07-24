@@ -6,6 +6,9 @@
 #define ARDUINOJSON_USE_LONG_LONG 1
 #include "ArduinoJson.h"
 
+/******************************************************************************
+* Template base for simple classes that build JSON out of structs
+******************************************************************************/
 template <typename TStruct, int TDocSize>
 class JsonBuilderBase
 {

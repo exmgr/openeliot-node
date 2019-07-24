@@ -11,7 +11,11 @@ namespace RTC
 
     uint32_t get_timestamp();
 
+    float get_external_rtc_temp();
+
     void print_time();
+
+    bool tstamp_valid(uint32_t tstamp);
 
     // TODO: Temp public
     RetResult sync_gsm_rtc_from_ntp();
