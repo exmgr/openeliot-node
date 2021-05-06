@@ -8,6 +8,8 @@
 #include "const.h"
 #include "device_config.h"
 #include "rom/rtc.h"
+#include "credentials.h"
+#include "common.h"
 
 namespace Utils
 {
@@ -25,54 +27,20 @@ namespace Utils
 		snprintf(out, size,  "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], out[5]);
 	}
 
-	/********************************************************************************
-	 * Get current device's device descriptor
-	 * Device descriptors are mapped to devices by their MAC
-	 * Not fidning the device is a fatal condition. 
-	 ********************************************************************************/
-	const DeviceDescriptor* get_device_descriptor()
-	{
-		DeviceDescriptor *descriptor = NULL;
-		
-		// Total devices
-		uint8_t devices = sizeof(DEVICE_DESCRIPTORS) / sizeof(DEVICE_DESCRIPTORS[0]);
-
-		// Current device mac
-		char current_mac[18] = "";
-		get_mac(current_mac, sizeof(current_mac));
-
-		for(uint8_t i = 0; i < devices; i++)
-		{
-			if(strcmp(DEVICE_DESCRIPTORS[i].mac, current_mac) == 0)
-				return &DEVICE_DESCRIPTORS[i];
-		}
-
-		if(descriptor == NULL)
-		{
-			Serial.print(F("ACHTUNG! Device not recognized! MAC: "));
-			Serial.println(current_mac);
-			Utils::serial_style(STYLE_WHITE_BKG);
-			Utils::serial_style(STYLE_RED);
-			Serial.println(F("Terminating."));
-
-			while(1){}
-		}
-
-		// Line never reached, has to be here for compiler error
-		return NULL;
-	}
-
 	/******************************************************************************
-	* Get battery level
-	* @return Battery level percentage
-	******************************************************************************/
-	int battery_level()
+	 * Log mac address
+	 *****************************************************************************/
+	void log_mac()
 	{
-		// TODO: Stub. Currently returns dummy value
+		uint8_t mac[8] = {0};
 
-		return 87;
+		esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+		uint32_t meta1 = (uint32_t)mac;
+		uint32_t meta2 = (uint32_t)mac[4];
+
+		Log::log(Log::MAC_ADDRESS, meta1, meta2);
 	}
-
 
 	/********************************************************************************
 	 * Print a separator line to the debug output with an optional name/title
@@ -82,7 +50,7 @@ namespace Utils
 	void print_separator(const __FlashStringHelper *title)
 	{
 		const int WIDTH = 55;
-		Serial.print(F("\x18\x18\x18\x18"));
+		debug_print(F("\x18\x18\x18\x18"));
 
 		int padding = 0;		
 
@@ -102,18 +70,18 @@ namespace Utils
 			}
 
 			// Space before and after title
-			Serial.print(F(" "));
-			Serial.print(F(title));
-			Serial.print(F(" "));
+			debug_print(F(" "));
+			debug_print(F(title));
+			debug_print(F(" "));
 		}
 
 		// Fill padding with chars
 		for(int i = 0; i < padding; i++)
 		{
-			Serial.print('\x18');
+			debug_print('\x18');
 		}
 
-		Serial.println();
+		debug_println();
 	}
 
 	/********************************************************************************
@@ -124,9 +92,34 @@ namespace Utils
 	void print_block(const __FlashStringHelper *title)
 	{
 		const int WIDTH = 55;
-		Serial.println("=======================================================");
-		Serial.printf("= %-*s%s \n", WIDTH - 3, title, "=");
-		Serial.println("=======================================================");
+		const __FlashStringHelper *text;
+
+		if(title == NULL)
+			text = F("");
+		else
+			text = title;
+
+		debug_println("=======================================================");
+		debug_printf("= %-*s%s \n", WIDTH - 3, text, "=");
+		debug_println("=======================================================");
+	}
+
+	/******************************************************************************
+	 * Print a buffer in hex
+	 * @param buff Buffer to print
+	 * @param len Buffer length
+	 * @param break_pos Add linebreak every X bytes
+	 *****************************************************************************/
+	void print_buff_hex(uint8_t *buff, int len, int break_pos)
+	{
+		for(int i = 0; i < len; i++)
+		{
+			Serial.printf("%02x ", buff[i]);
+
+			if((i + 1) % break_pos == 0)
+				Serial.println();
+		}
+		Serial.println();
 	}
 
 	/********************************************************************************
@@ -135,7 +128,7 @@ namespace Utils
 	 *******************************************************************************/
 	void serial_style(SerialStyle style)
 	{
-		Serial.printf("\033[%dm", style);
+		debug_printf("\033[%dm", style);
 	}
 
     /********************************************************************************
@@ -157,7 +150,7 @@ namespace Utils
 		// TODO rename? split in to two ?
 		// (power boost needs no change before sleep)
         
-		Serial.println(F("Setting IP5306 power registers"));
+		debug_println(F("Setting IP5306 power registers"));
 
 		Wire.beginTransmission(IP5306_I2C_ADDR);
 		Wire.write(IP5306_REG_SYS_CTL0);
@@ -194,12 +187,12 @@ namespace Utils
 
 		// 	Wire.endTransmission();
 
-		// 	Serial.println(F("Setting power boost state successful."));
+		// 	debug_println(F("Setting power boost state successful."));
 		// 	return RET_OK;
 		// }
 
 		// Utils::serial_style(STYLE_RED);
-		// Serial.println(F("Setting power boost state failed."));
+		// debug_println(F("Setting power boost state failed."));
 		// Utils::serial_style(STYLE_RESET);
 
 		// return RET_ERROR;;
@@ -241,7 +234,7 @@ namespace Utils
 			int host_len = host_end - cursor;
 			if(host_len > host_max_size)
 			{
-				Serial.println(F("Host output buffer too small."));
+				debug_println(F("Host output buffer too small."));
 				return RET_ERROR;
 			}
 				
@@ -253,9 +246,7 @@ namespace Utils
 		
 		// Get port if it exists
 		if(port_start != nullptr)
-		{		
-			char port_str[6] = "";
-			
+		{
 			char *port_end = strchr(port_start, '/');
 			if(port_end != nullptr)
 			{
@@ -283,7 +274,7 @@ namespace Utils
 		}
 		else if(path_len > path_max_size)
 		{
-			Serial.println(F("Path output buffer too small."));
+			debug_println(F("Path output buffer too small."));
 			return RET_ERROR;
 		}
 		
@@ -298,10 +289,7 @@ namespace Utils
 	// TODO: Useless?? Can be inline
 	RetResult tb_build_attributes_url_path(char *buff, int buff_size)
 	{
-		// Devive token required for URL
-		const DeviceDescriptor *device = Utils::get_device_descriptor();
-
-		snprintf(buff, buff_size, TB_SHARED_ATTRIBUTES_URL_FORMAT, device->tb_access_token);
+		snprintf(buff, buff_size, TB_SHARED_ATTRIBUTES_URL_FORMAT, DeviceConfig::get_tb_device_token());
 
 		return RET_OK;
 	}
@@ -311,10 +299,7 @@ namespace Utils
 	 *****************************************************************************/
 	RetResult tb_build_telemetry_url_path(char *buff, int buff_size)
 	{
-		// Devive token required for URL
-		const DeviceDescriptor *device = Utils::get_device_descriptor();
-
-		snprintf(buff, buff_size, TB_TELEMETRY_URL_FORMAT, device->tb_access_token);
+		snprintf(buff, buff_size, TB_TELEMETRY_URL_FORMAT, DeviceConfig::get_tb_device_token());
 
 		return RET_OK;
 	}
@@ -331,6 +316,39 @@ namespace Utils
 	}
 
 	/******************************************************************************
+	* Read ADC and convert to mV
+	* @param pin ADC pin
+	* @param samples Number of samples to read
+	* @param sampling_delay_ms mS to wait between samples
+	* @return Value in mV
+	******************************************************************************/
+	int read_adc_mv(uint8_t pin, int samples, int sampling_delay_ms)
+	{
+		if(samples < 0)
+		{
+			return -1;
+		}
+
+		if(sampling_delay_ms < 0)
+		{
+			return -1;
+		}
+
+		int level_raw = 0;
+		for(int i = 0; i < samples; i++)
+		{
+			level_raw += analogRead(pin);
+			delay(sampling_delay_ms);
+		}
+		level_raw /= samples;
+
+		// Convert to mV
+		int mv = ((float)3600 / 4096) * level_raw;
+
+		return mv;
+	}
+
+	/******************************************************************************
 	 * Print reset reason
 	 *****************************************************************************/
 	void print_reset_reason()
@@ -340,50 +358,364 @@ namespace Utils
 		switch(reason)
 		{
 			case RESET_REASON::POWERON_RESET:
-				Serial.println(F("Power ON")); 
+				debug_println(F("Power ON")); 
 				break;
 			case RESET_REASON::SW_RESET:
-				Serial.println(F("Software reset (digital core)"));
+				debug_println(F("Software reset (digital core)"));
 				break;
 			case RESET_REASON::OWDT_RESET:
-				Serial.println(F("Legacy watchdog (digital core)"));
+				debug_println(F("Legacy watchdog (digital core)"));
 				break;
 			case RESET_REASON::DEEPSLEEP_RESET:
-				Serial.println(F("Deep sleep (digital core)"));
+				debug_println(F("Deep sleep (digital core)"));
 				break;
 			case RESET_REASON::SDIO_RESET:
-				Serial.println(F("SLC module (digital core)"));
+				debug_println(F("SLC module (digital core)"));
 				break;
 			case RESET_REASON::TG0WDT_SYS_RESET:
-				Serial.println(F("TG0 Watchdog (digital core)"));
+				debug_println(F("TG0 Watchdog (digital core)"));
 				break;
 			case RESET_REASON::TG1WDT_SYS_RESET:
-				Serial.println(F("TG1 Watchdog (digital core)"));
+				debug_println(F("TG1 Watchdog (digital core)"));
 				break;
 			case RESET_REASON::RTCWDT_SYS_RESET:
-				Serial.println(F("RTC Watchdog (digital core)"));
+				debug_println(F("RTC Watchdog (digital core)"));
 				break;
 			case RESET_REASON::INTRUSION_RESET:
-				Serial.println(F("Intrusion tested to reset CPU"));
+				debug_println(F("Intrusion tested to reset CPU"));
 				break;
 			case RESET_REASON::TGWDT_CPU_RESET:
-				Serial.println(F("Timer group watchdog (CPU)"));
+				debug_println(F("Time group reset CPU"));
 				break;
 			case RESET_REASON::SW_CPU_RESET:
-				Serial.println(F("Software reset (CPU)"));
+				debug_println(F("Software reset (CPU)"));
 				break;
 			case RESET_REASON::RTCWDT_CPU_RESET:
-				Serial.println(F("RTC Watchdog (CPU)"));
+				debug_println(F("RTC Watchdog (CPU)"));
 				break;
 			case RESET_REASON::EXT_CPU_RESET:
-				Serial.println(F("Ext (CPU)"));
+				debug_println(F("Ext (CPU)"));
 				break;
 			case RESET_REASON::RTCWDT_BROWN_OUT_RESET:
-				Serial.println(F("Brown out"));
+				debug_println(F("Brown out"));
 				break;
 			case RESET_REASON::RTCWDT_RTC_RESET:
-				Serial.println(F("RTC watch dog reset (digital core and rtc module)"));
+				debug_println(F("RTC watch dog reset (digital core and rtc module)"));
 				break;
 		}
+	}
+
+	/******************************************************************************
+	 * Print falgs and their vals
+	 *****************************************************************************/
+	void print_flags()
+	{
+		Utils::print_separator(F("Flags"));
+
+		debug_print(F("- Debug mode: "));
+		if(FLAGS.DEBUG_MODE)
+		{
+			serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			serial_style(STYLE_RESET);
+		}
+		else
+		{
+			serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- WiFi Debug console: "));
+		if(FLAGS.WIFI_DEBUG_CONSOLE_ENABLED)
+		{
+			serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			serial_style(STYLE_RESET);
+		}
+		else
+		{
+			serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- NBIoT mode: "));
+		if(FLAGS.NBIOT_MODE)
+		{
+			debug_println(F("Enabled"));
+		}
+		else
+		{
+			debug_println(F("Disabled"));
+		}
+
+		debug_print(F("- Sleep minutes treated as seconds: "));
+		if(FLAGS.SLEEP_MINS_AS_SECS)
+		{
+			serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			serial_style(STYLE_RESET);
+		}
+		else
+		{
+			serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Water quality sensor: "));
+		if(FLAGS.WATER_QUALITY_SENSOR_ENABLED)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Water level sensor: "));
+		if(FLAGS.WATER_LEVEL_SENSOR_ENABLED)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Atmos41 weather station: "));
+		if(FLAGS.WEATHER_STATION_ENABLED)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Water Quality measurements return dummy values: "));
+		if(FLAGS.MEASURE_DUMMY_WATER_QUALITY)
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Water Level measurements return dummy values: "));
+		if(FLAGS.MEASURE_DUMMY_WATER_LEVEL)
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Weather measurements return dummy values: "));
+		if(FLAGS.MEASURE_DUMMY_WEATHER)
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- External RTC: "));
+		if(FLAGS.EXTERNAL_RTC_ENABLED)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- Force normal battery mode: "));
+		if(FLAGS.BATTERY_FORCE_NORMAL_MODE)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		debug_print(F("- GSM AT command output to console: "));		
+		if(PRINT_GSM_AT_COMMS)
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Enabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Disabled"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		Utils::print_separator(NULL);
+	}
+
+	/******************************************************************************
+	* Check if element exists in array
+	* @param val Value to check against
+	* @param arr Array
+	* @param size Size of array
+	* @return Position of element in array, -1 if not found
+	******************************************************************************/
+	template<typename T>
+	int in_array(T val, const T arr[], int size)
+	{
+		if(size < 1) return -1;
+
+		for (int i = 0; i < size; i++)
+		{
+			if(arr[i] == val)
+			{
+				return i;
+			}
+		}
+
+		return -1;
+	}
+	template int in_array<int>(int val, const int arr[], int size);
+
+	/******************************************************************************
+	 * Checks fw parameters that would prevent the device from operating correctly
+	 * if not set properly.
+	 *****************************************************************************/
+	int boot_self_test()
+	{
+		debug_println(F("Boot self test"));
+		RetResult ret = RET_OK;
+
+		//
+		// Wake up schedule
+		//
+		const DeviceConfig::Data *device_config = DeviceConfig::get();
+
+		if(!SleepScheduler::schedule_valid(WAKEUP_SCHEDULE_DEFAULT))
+		{
+			debug_println(F("Default wakeup schedule invalid."));
+			ret = RET_ERROR;
+		}
+
+		if(!SleepScheduler::schedule_valid(WAKEUP_SCHEDULE_BATT_LOW))
+		{
+			debug_println(F("Battery low schedule invalid."));
+			ret = RET_ERROR;
+		}
+
+		if(ret == RET_OK)
+		{
+			Utils::serial_style(STYLE_GREEN);
+			debug_println(F("Boot self test passed"));
+			Utils::serial_style(STYLE_RESET);
+		}
+		else
+		{
+			Utils::serial_style(STYLE_RED);
+			debug_println(F("Boot self test failed"));
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		return ret;
+	}
+
+	/******************************************************************************
+	 * Check credentials in DeviceConfig, if not populated use FallBack
+	 ******************************************************************************/
+	void check_credentials()
+	{
+		// Check TB device token
+		if(strlen(DeviceConfig::get_tb_device_token()) == 0 || 
+		strcmp(DeviceConfig::get_tb_device_token(), FALLBACK_TB_DEVICE_TOKEN) == 0 )
+		{
+			debug_print(DEBUG_LEVEL_ERROR_STYLE);
+			Utils::print_separator(NULL);
+
+			debug_println(F("TB device token not configured, fallback token is used!"));
+
+			if(strlen(DeviceConfig::get_tb_device_token()) == 0)
+			{
+				DeviceConfig::set_tb_device_token((char*)FALLBACK_TB_DEVICE_TOKEN);
+				DeviceConfig::commit();
+			}
+
+			Utils::print_separator(NULL);
+			Utils::serial_style(STYLE_RESET);
+		}
+
+		// Check APN
+		if(strlen(DeviceConfig::get_cellular_apn()) == 0 ||
+		strcmp(DeviceConfig::get_cellular_apn(), FALLBACK_CELL_APN) == 0 )
+		{
+			debug_print(DEBUG_LEVEL_ERROR_STYLE);
+			Utils::print_separator(NULL);
+
+			debug_println(F("Cellular provider APN not configured, fallback APN is used!"));
+
+			if(strlen(DeviceConfig::get_cellular_apn()) == 0)
+			{
+				DeviceConfig::set_cellular_apn((char*)FALLBACK_CELL_APN);
+				DeviceConfig::commit();				
+			}
+
+			Utils::print_separator(NULL);
+			Utils::serial_style(STYLE_RESET);
+		}
+	}
+
+	/******************************************************************************
+	 * Convert degrees to radians
+	 *****************************************************************************/
+	float deg_to_rad(float deg)
+	{
+		return deg * M_PI / 180;
+	}
+
+	/******************************************************************************
+	 * Convert radians to degrees
+	 *****************************************************************************/
+	float rad_to_deg(float rad)
+	{
+		return rad * (180 / M_PI);
 	}
 }

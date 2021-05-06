@@ -1,4 +1,5 @@
 #include "device_config.h"
+#include "common.h"
 #include "app_config.h"
 
 /******************************************************************************
@@ -24,7 +25,15 @@ namespace DeviceConfig
 
 		ota_flashed: false,
 
-		last_rc_data_id: 0
+		last_rc_data_id: 0,
+
+		tb_device_token: {'\0'},
+
+		cellular_apn: {'\0'},
+
+		fo_sniffer_id: 0,
+
+		fo_enabled: false,
 
 		/** Last received/
 		last_remote_control_data: RemoteControl::Data(0, 0, 0, 0) */
@@ -55,7 +64,7 @@ namespace DeviceConfig
 		// doesn't exist or for other reason (no way to tell apart)
 		if(load() != RET_OK)
 		{
-			Serial.println(F("Config store key not set "));
+			debug_println(F("Config store key not set "));
 
 			write_defaults();
 
@@ -64,7 +73,8 @@ namespace DeviceConfig
 			{
 				// Load failed but the defaults have already been written to the
 				// current config struct and will be used.
-				Serial.println(F("Could not load config. Init failed. Defaults will be used."));
+				debug_println_e(F("Could not load config. Init failed. Defaults will be used."));
+				Log::log(Log::USING_DEFAULT_DEVICE_CONFIG);
 				return RET_ERROR;
 			}
 		}
@@ -83,7 +93,7 @@ namespace DeviceConfig
 		if(!_prefs.begin(DEVICE_CONFIG_NVS_NAMESPACE_NAME))
 		{
 			end();
-			Serial.println(F("Could not begin config NVS store."));
+			debug_println(F("Could not begin config NVS store."));
 			return RET_ERROR;
 		}
 		
@@ -128,10 +138,10 @@ namespace DeviceConfig
 		int bytes_written = _prefs.putBytes(DEVICE_CONFIG_NVS_NAMESPACE_NAME, &_current_config, sizeof(_current_config));
 		if(bytes_written != sizeof(_current_config))
 		{
-			Serial.print(F("Could not write config to NVS. Bytes written: "));
-			Serial.println(bytes_written, DEC);
-			Serial.print(F("Expected: "));
-			Serial.println(sizeof(_current_config), DEC);
+			debug_print(F("Could not write config to NVS. Bytes written: "));
+			debug_println(bytes_written, DEC);
+			debug_print(F("Expected: "));
+			debug_println(sizeof(_current_config), DEC);
 
 			ret = RET_ERROR;
 		}
@@ -169,7 +179,7 @@ namespace DeviceConfig
 			// CRC check failed. Log event and abort.
 			if(crc32_bkp != Utils::crc32((uint8_t*)&loaded_config, sizeof(loaded_config)))
 			{
-				Serial.println(F("Config failed CRC32 check. Loading aborted."));
+				debug_println(F("Config failed CRC32 check. Loading aborted."));
 
 				Log::log(Log::DEVICE_CONFIG_DATA_CRC_ERRORS);
 
@@ -189,11 +199,11 @@ namespace DeviceConfig
 		// Bytes read, but invalid count.
 		else
 		{
-			Serial.println(F("Could not load Config from flash. Invalid byte count."));
-			Serial.print(F("Bytes read: "));
-			Serial.println(read_bytes, DEC);
-			Serial.print(F("Expected: "));
-			Serial.println(sizeof(loaded_config), DEC);
+			debug_println(F("Could not load Config from flash. Invalid byte count."));
+			debug_print(F("Bytes read: "));
+			debug_println(read_bytes, DEC);
+			debug_print(F("Expected: "));
+			debug_println(sizeof(loaded_config), DEC);
 			ret = RET_ERROR;
 		}
 
@@ -208,12 +218,12 @@ namespace DeviceConfig
 	******************************************************************************/
 	RetResult write_defaults()
 	{
-		Serial.println(F("Writing default config..."));
+		debug_println(F("Writing default config..."));
 
 		// Copy defaults struct to current
 		memcpy(&_current_config, &DEVICE_CONFIG_DEFAULT, sizeof(DEVICE_CONFIG_DEFAULT));
 		// Copy default wake up schedule to current
-		set_wakeup_schedule((Sleep::WakeupScheduleEntry*) &WAKEUP_SCHEDULE_DEFAULT);
+		set_wakeup_schedule((SleepScheduler::WakeupScheduleEntry*) &WAKEUP_SCHEDULE_DEFAULT);
 
 		commit();
 
@@ -227,23 +237,43 @@ namespace DeviceConfig
 	{
 		Utils::print_separator(F("DEVICE CONFIG"));
 	
-		Serial.print(F("CRC32: "));
-		Serial.println(data->crc32, DEC);
+		debug_print(F("CRC32: "));
+		debug_println(data->crc32, DEC);
 
-		Serial.print(F("Clean reboot: "));
-		Serial.println(data->clean_reboot, DEC);
+		debug_print(F("Clean reboot: "));
+		debug_println(data->clean_reboot, DEC);
 
-		Serial.print(F("OTA flashed: "));
-		Serial.println(data->ota_flashed, DEC);
+		debug_print(F("OTA flashed: "));
+		debug_println(data->ota_flashed, DEC);
 
-		Serial.print(F("Last remote config data id: "));
-		Serial.println(data->last_rc_data_id);
+		debug_print(F("Last remote config data id: "));
+		debug_println(data->last_rc_data_id);
 
-		Serial.print(F("Water sensors measure interval (mins): "));
-		Serial.println(get_wakeup_schedule_reason_int(Sleep::WakeupReason::REASON_READ_WATER_SENSORS), DEC);
+		debug_print(F("Water sensors measure interval (mins): "));
+		debug_println(get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS), DEC);
 
-		Serial.print(F("Calling home interval (mins): "));
-		Serial.println(get_wakeup_schedule_reason_int(Sleep::WakeupReason::REASON_CALL_HOME), DEC);
+		debug_print(F("Weather station measure interval (mins): "));
+		debug_println(get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WEATHER_STATION), DEC);
+
+		debug_print(F("Calling home interval (mins): "));
+		debug_println(get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_CALL_HOME), DEC);
+
+		debug_print(F("TB device token: "));
+		debug_println(data->tb_device_token);
+
+		debug_print(F("FO weather station: "));
+		if(data->fo_enabled)
+		{
+			debug_println("Enabled");
+		}
+		else
+		{
+			debug_println("Disabled");
+		}
+			
+		debug_print(F("FO Sniffer ID: "));
+		debug_println(data->fo_sniffer_id, HEX);
+
 
 		Utils::print_separator(NULL);
 	}
@@ -281,7 +311,7 @@ namespace DeviceConfig
 		return _current_config.ota_flashed;
 	}
 
-	RetResult set_wakeup_schedule(const Sleep::WakeupScheduleEntry *schedule)
+	RetResult set_wakeup_schedule(const SleepScheduler::WakeupScheduleEntry *schedule)
 	{
 		memcpy(_current_config.wakeup_schedule, schedule, sizeof(_current_config.wakeup_schedule));
 	}
@@ -289,14 +319,14 @@ namespace DeviceConfig
 	/******************************************************************************
 	* Find a reason in the sleep schedule and update its interval
 	******************************************************************************/
-	RetResult set_wakeup_schedule_reason_int(Sleep::WakeupReason reason, int int_mins)
+	RetResult set_wakeup_schedule_reason_int(SleepScheduler::WakeupReason reason, int wakeup_int)
 	{
 		// TODO: Check for min/max values should be done here instead only when received by remote config?
 		for(int i = 0; i < WAKEUP_SCHEDULE_LEN; i++)
 		{
 			if(_current_config.wakeup_schedule[i].reason == reason)
 			{
-				_current_config.wakeup_schedule[i].interval_mins = int_mins;
+				_current_config.wakeup_schedule[i].wakeup_int = wakeup_int;
 				return RET_OK;
 			}
 		}
@@ -309,13 +339,13 @@ namespace DeviceConfig
 	/******************************************************************************
 	* Find a reason in the sleep schedule return its interval
 	******************************************************************************/
-	int get_wakeup_schedule_reason_int(Sleep::WakeupReason reason)
+	int get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason reason)
 	{
 		for(int i = 0; i < WAKEUP_SCHEDULE_LEN; i++)
 		{
 			if(_current_config.wakeup_schedule[i].reason == reason)
 			{
-				return _current_config.wakeup_schedule[i].interval_mins;
+				return _current_config.wakeup_schedule[i].wakeup_int;
 			}
 		}
 
@@ -323,6 +353,13 @@ namespace DeviceConfig
 		return -1;
 	}
 
+	/******************************************************************************
+	 * Get wakeup schedule
+	 *****************************************************************************/
+	RetResult get_wakeup_schedule(SleepScheduler::WakeupScheduleEntry *schedule)
+	{
+		memcpy(schedule, &_current_config, sizeof(WAKEUP_SCHEDULE_DEFAULT));
+	}
 
 	/******************************************************************************
 	 * Last remote config data id
@@ -337,5 +374,69 @@ namespace DeviceConfig
 		_current_config.last_rc_data_id = id;
 
 		return RET_OK;
+	}
+
+	/******************************************************************************
+	* Get TB device token
+	******************************************************************************/
+	const char* get_tb_device_token()
+	{
+		return _current_config.tb_device_token;
+	}
+
+	/******************************************************************************
+	* Set TB device token
+	******************************************************************************/
+	RetResult set_tb_device_token(char *token)
+	{
+		strncpy(_current_config.tb_device_token, token, sizeof(_current_config.tb_device_token));
+	}
+
+	/******************************************************************************
+	* Set cellular APN
+	******************************************************************************/
+	const char* get_cellular_apn()
+	{
+		return _current_config.cellular_apn;
+	}
+
+	/******************************************************************************
+	* Get cellular APN
+	******************************************************************************/
+	RetResult set_cellular_apn(char *apn)
+	{
+		strncpy(_current_config.cellular_apn, apn, sizeof(_current_config.cellular_apn));
+	}
+
+	/******************************************************************************
+	* Set FO sniffer weather station ID
+	******************************************************************************/
+	const uint8_t get_fo_sniffer_id()
+	{
+		return _current_config.fo_sniffer_id;
+	}
+
+	/******************************************************************************
+	* Get FO sniffer weather station ID
+	******************************************************************************/
+	RetResult set_fo_sniffer_id(uint8_t id)
+	{
+		_current_config.fo_sniffer_id = id;
+	}
+
+	/******************************************************************************
+	* Get FO weather station enabled status
+	******************************************************************************/
+	const bool get_fo_enabled()
+	{
+		return _current_config.fo_enabled;
+	}
+
+	/******************************************************************************
+	* Get FO sniffer weather station ID
+	******************************************************************************/
+	RetResult set_fo_enabled(bool enabled)
+	{
+		_current_config.fo_enabled = enabled;
 	}
 }

@@ -1,14 +1,29 @@
-## Εισαγωγή
-Το OpenELIoT Νode αποτελεί τον κόμβο καταγραφής δεδομένων από περιβαλλοντικούς αισθητήρες και είναι μέρος του έργου [Open ELIoT](https://github.com/exmgr/OpenELIoT). Αποτελείται από την ίδια την ηλεκτρονική συσκευή καταγραφής και το υλισμικό της το οποίο βρίσκεται σε αυτό το αποθετήριο. 
-Είναι ένα αυτόνομα σύστημα καταγραφής κατασκευασμένο να λειτουργεί για μεγάλα χρονικά διαστήματα σε απομακρυσμένες περιοχές αντλώντας ηλιακή ενέργεια για την φόρτιση των μπαταριών του και το περίβλημά του είναι ανθεκτικό στις καιρικές συνθήκες (ήλιος, βροχή, υγρασία).
+## AquaTROLL Config
+AquaTROLL sensors should be configured with the following parameters in the exact order
 
-![OpenELIoT Node](docs/images/node.jpg)
+### Aquatroll 500
+RDO - Dissolved Oxygen (concentration) - mg/L
+RDO - Dissolved Oxygen (%saturation) - %Sat
+Cond - Temperature - C
+Cond - Specific Conductivity - uS/cm
+pH/ORP - ph -pH
+pH/ORP - Oxidation Reductino Potential (ORP) - mV
+Pres 30ft - Pressure - PSI
+Pres 30ft - Depth - ft
 
-## Αρχιτεκτονική Node
+### Aquatroll 400 - (Pre-version 130)
+RDO - Dissolved oxygen (concentration) - mg/L
+RDO - Dissolved oxygen (%saturation) - %Sat
+RDO - Temperature - C
+Cond - Specific Conductivity - uS/cm
+pH/ORP
 
-![Αρχιτεκτονική συστήματος](docs/images/system_architecture.png)
-
-Το ELIoT node αποτελεί κεντρικό δομικό στοιχείο του κάθε σταθμού καταγραφής OpenELIoT, στον οποίο συνδέονται όλοι οι αισθητήρες των οποίον τα δεδομένα καταγράφει, αποθηκεύει και αποστέλλει στην πλατφόρμα. Αποτελείται από κυκλώματα που του επιτρέπουν να επικοινωνεί μέσω ποικίλων πρωτοκόλλων με τους αισθητήρες, κυκλώματα διαχείρισης ενέργειας για αυτόνομη λειτουργία με φόρτιση των μπαταριών από τον ήλιο και υποστήριξη τεχνολογιών ασύρματης επικοινωνίας για αποστολή των δεδομένων.
-
-## Τεχνικός οδηγός
-Αναλυτική περιγραφή του συστήματος, οδηγίες για την κατασκευή, ρύθμιση και τον προγραμματισμού του υλισμικού ενός OpenELIoT Node βρίσκονται στον [τεχνικό οδηγό](docs/technical_guide.pdf)
+### Aquatroll 400 - (Starting from version 130)
+RDO - Dissolved oxygen (concentration) - mg/L
+RDO - Dissolved oxygen (%saturation) - %Sat
+RDO - Temperature - C
+Cond - Specific Conductivity - uS/cm
+pH/ORP - pH
+pH/ORP - Oxidation Reduction Potential (ORP) - mV
+Pres(A) 250ft - Pressure mBar
+Pres(A) 250ft - Depth - cm

@@ -25,6 +25,9 @@
 #define PIN_SDI12_I2C1_SDA 32 // Nano pin A4
 #define PIN_SDI12_I2C1_SCL 33 // Nano pin A5 
 
+/** Channel toggle pin for toggling between A/B SDI12 channels */
+#define PIN_SDI12_CHANNEL_TOGGLE 15 // 
+
 /** Water sensors (quality & level) and SDI12 adapter power is controlled from the same pin */
 #define PIN_WATER_SENSORS_PWR 13
 
@@ -34,6 +37,7 @@
 #define PIN_WATER_LEVEL_PWM 14
 
 /** Battery ADC input */
-#define PIN_ADC_BAT 35
+//#define PIN_ADC_BAT 39 // Custom pcb input
+#define PIN_ADC_BAT 35 // TCall
 
 #endif

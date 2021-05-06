@@ -1,9 +1,11 @@
 #include "water_sensors.h"
-#include "water_quality_sensor.h"
+#include "aquatroll.h"
 #include "water_level.h"
 #include "rtc.h"
 #include "utils.h"
 #include "log.h"
+#include "common.h"
+#include "driver/rtc_io.h"
 
 namespace WaterSensors
 {
@@ -12,11 +14,15 @@ namespace WaterSensors
 	 *****************************************************************************/
 	RetResult init()
 	{
-		// Set up pins
-		pinMode(PIN_WATER_SENSORS_PWR, OUTPUT);
-
 		// Make sure sensors are off
 		off();
+
+		// Setup RTC GPIO
+		esp_sleep_pd_config(esp_sleep_pd_domain_t::ESP_PD_DOMAIN_RTC_PERIPH, esp_sleep_pd_option_t::ESP_PD_OPTION_ON);
+		rtc_gpio_pulldown_en(PIN_WATER_SENSORS_PWR);
+		rtc_gpio_set_direction(PIN_WATER_SENSORS_PWR, rtc_gpio_mode_t::RTC_GPIO_MODE_OUTPUT_ONLY);
+
+		return RET_OK;
 	}
 
 	/******************************************************************************
@@ -25,15 +31,19 @@ namespace WaterSensors
 	 *****************************************************************************/
 	RetResult on()
 	{
-		Serial.println(F("Water sensors ON."));
+		debug_println(F("Water sensors ON."));
 
 		#ifdef TCALL_H
 			// Turn IP5306 power boost OFF to reduce idle current
 			Utils::ip5306_set_power_boost_state(true);
 		#endif
 
+		// TODO: Power on/off mgmt should be moved to Power::switch
+		pinMode(PIN_WATER_SENSORS_PWR, OUTPUT);
 		digitalWrite(PIN_WATER_SENSORS_PWR, 1);
-		delay(1000);
+		delay(WATER_SENSORS_POWER_ON_DELAY_MS);
+
+		delay(200);
 
         return RET_OK;
 	}
@@ -43,9 +53,17 @@ namespace WaterSensors
 	 *****************************************************************************/
 	RetResult off()
 	{
-		Serial.println(F("Water sensors OFF."));
+		debug_println(F("Water sensors OFF."));
 
+		// TODO: Power on/off mgmt should be moved to Power::switch
+
+		pinMode(PIN_WATER_SENSORS_PWR, OUTPUT);
 		digitalWrite(PIN_WATER_SENSORS_PWR, 0);
+
+		// Set to input instead of driving low to prevent LED on TSIM from turning ON
+		// pinMode(PIN_WATER_SENSORS_PWR, INPUT);
+
+		rtc_gpio_set_level(PIN_WATER_SENSORS_PWR, 0);
 		delay(100);
 
 		#ifdef TCALL_H
@@ -58,83 +76,130 @@ namespace WaterSensors
 
 	/******************************************************************************
 	* Read all water sensors and log their data in memory
+	* @return RET_ERROR only if failed to read BOTH sensors
 	******************************************************************************/
-	void log()
+	RetResult log()
 	{
-		SensorData::Entry data = {0};
-
-		//
-		// Read water quality sensor
-		// Try reading X times. If fails, cycle power and try once more.
-		RetResult ret = RET_ERROR;
+		WaterSensorData::Entry data = {0};
 		int tries = 3;
+		RetResult ret_quality = RET_ERROR, ret_level;
+
+		if(!FLAGS.WATER_QUALITY_SENSOR_ENABLED & !FLAGS.WATER_LEVEL_SENSOR_ENABLED)
+		{
+			Serial.println(F("No water sensor is enabled."));
+			return RET_ERROR;
+		}
 
 		WaterSensors::on();
 
-		do
+		if(FLAGS.WATER_QUALITY_SENSOR_ENABLED)
 		{
-			ret = WaterQualitySensor::measure(&data);
+			Log::log(Log::WATER_SENSORS_MEASUREMENT_LOG);
 
-			if(ret != RET_OK)
+			//
+			// Read water quality sensor
+			// Try reading X times. If fails, cycle power and try once more.
+			WaterSensors::on();
+
+			do
 			{
-				Utils::serial_style(STYLE_RED);
-				Serial.print(F("Failed to read water quality sensor."));
+				ret_quality = Aquatroll::measure(&data);
 
-				if(tries > 1)
+				if(ret_quality != RET_OK)
 				{
-					Serial.print(F(" Retrying..."));
-					delay(WATER_QUALITY_RETRY_WAIT_MS);
-				}
-				Serial.println();
+					Utils::serial_style(STYLE_RED);
+					debug_print(F("Failed to read water quality sensor."));
+					Utils::serial_style(STYLE_RESET);
 
-				// Next try is last, cycle power
-				if(tries == 2)
-				{
-					Serial.println(F("Cycling sensor power."));	
-					WaterSensors::off();
-					WaterSensors::on();
-				}
+					if(tries > 1)
+					{
+						debug_print(F("Retrying..."));
+						delay(WATER_QUALITY_RETRY_WAIT_MS);
+					}
+					debug_println();
 
-				Utils::serial_style(STYLE_RESET);
+					// Next try is last, cycle power
+					if(tries == 2)
+					{
+						debug_println(F("Cycling sensor power."));	
+						WaterSensors::off();
+						WaterSensors::on();
+					}
+				}
+				else
+					break;
+
+			}while(--tries);
+
+			// Log possible error
+			if(ret_quality == RET_ERROR)
+			{
+				Log::log(Log::WATER_QUALITY_MEASUREMENT_FAILED);
 			}
-			else
-				break;
-
-		}while(--tries);
-
-        // Log error
-		if(ret == RET_ERROR)
-		{
-			Log::log(Log::WATER_QUALITY_MEASURE_FAILED);
 		}
 
 		//
 		// Read water level
 		//
-		if(WaterLevel::measure(&data) != RET_OK)
+		tries = 3;
+		if(FLAGS.WATER_LEVEL_SENSOR_ENABLED)
 		{
-			Log::log(Log::WATER_LEVEL_MEASURE_FAILED);
+			do
+			{
+				ret_level = WaterLevel::measure(&data);
+
+				if(ret_level != RET_OK)
+				{
+					// Utils::serial_style(STYLE_RED);
+					debug_print(F("Failed to read water level sensor."));
+					// Utils::serial_style(STYLE_RESET);
+
+					if(tries > 1)
+					{
+						debug_print(F("Retrying..."));
+						delay(WATER_LEVEL_RETRY_WAIT_MS);
+					}
+					debug_println();
+
+					// Next try is last, cycle power
+					if(tries == 2)
+					{
+						debug_println(F("Cycling sensor power."));	
+						WaterSensors::off();
+						WaterSensors::on();
+					}
+				}
+				else
+					break;
+			}while(--tries);
+		
+			// Log possible error
+			if(ret_level != RET_OK)
+			{
+				Log::log(Log::WATER_LEVEL_MEASURE_FAILED);
+			}
 		}
 
 		WaterSensors::off();
 
+		// If both sensors failed no reason to log error, return error
+		if(ret_level != RET_OK && ret_quality != RET_OK)
+		{
+			debug_println(F("Reading both water sensor data failed, data will not be stored."));
+			return RET_ERROR;
+		}
+
 		//
-		// Set timestamp
+		// Set timestamp and save
 		//
 		data.timestamp = RTC::get_timestamp();
 
-		Serial.println(F("Water sensor data:"));
-		SensorData::print(&data);
+		debug_println(F("Water sensor data:"));
+		WaterSensorData::print(&data);
 
-		SensorData::add(&data);
-		SensorData::get_store()->commit();
-	}
+		WaterSensorData::add(&data);
+		WaterSensorData::get_store()->commit();
 
-	/******************************************************************************
-	* Check if measure interval (mins) value is within valid range
-	******************************************************************************/
-	bool is_measure_int_value_valid(int interval)
-	{
-		return (interval >= MEASURE_WATER_SENSORS_INT_MINS_MIN && interval <= MEASURE_WATER_SENSORS_INT_MINS_MAX);
+		return RET_OK;
 	}
 }

@@ -8,17 +8,20 @@
 namespace Utils
 {
     void get_mac(char *out, uint8_t size);
-    const DeviceDescriptor* get_device_descriptor();
+    void log_mac();
+
+    // TODO: Obsolete
+    // const DeviceDescriptor* get_device_descriptor();
 
     void print_separator(const __FlashStringHelper *name);
 
     void print_block(const __FlashStringHelper *title);
 
+    void print_buff_hex(uint8_t *buff, int len, int break_pos = 8);
+
     void serial_style(SerialStyle style);
 
     uint32_t crc32(uint8_t *buff, uint32_t buff_size);
-
-    int battery_level();
 
     RetResult ip5306_set_power_boost_state(bool enable);
 
@@ -30,7 +33,21 @@ namespace Utils
 
     RetResult restart_device();
 
+    void check_credentials();
+
+    int read_adc_mv(uint8_t pin, int samples, int sampling_delay_ms);
+
+    void print_flags();
+
     void print_reset_reason();
+
+    template<typename T>
+	int in_array(T val, const T arr[], int size);
+
+    int boot_self_test();
+
+    float deg_to_rad(float deg);
+	float rad_to_deg(float rad);
 }
 
 #endif

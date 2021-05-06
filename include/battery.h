@@ -6,14 +6,15 @@
 namespace Battery
 {
     RetResult init();
-    RetResult read_gauge(int *voltage, int *pct);
+    RetResult read_gauge(uint16_t *voltage, uint16_t *pct);
     RetResult log_gauge();
-    RetResult read_gsm(uint16_t *voltage, uint16_t *pct);
-    RetResult log_gsm();
     RetResult read_adc(uint16_t *voltage, uint16_t *pct);
     RetResult log_adc();
+    RetResult log_solar_adc();
     BATTERY_MODE get_current_mode();
+    void sleep_charge();
     void print_mode();
+    RetResult read_solar_mv(uint16_t *voltage);
 }
 
 #endif

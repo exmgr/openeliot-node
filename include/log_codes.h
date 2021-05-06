@@ -1,5 +1,5 @@
-#ifndef LOG_CODES
-#define LOG_CODES
+#ifndef LOG_CODES_H
+#define LOG_CODES_H
 
 namespace Log
 {
@@ -41,6 +41,8 @@ namespace Log
 
         // Device going to sleep
         // Logged only for the main sleep event
+        // Meta1: Time awake (s)
+        // Meta2: Time to sleep (s)
         SLEEP = 12,
 
         // Device waking up from sleep
@@ -69,7 +71,7 @@ namespace Log
         // Battery measurements from GSM
         // Meta1: Voltage
         // Meta2: Percentage
-        BATTERY_GSM = 18,
+        BATTERY_GAUGE = 18,
 
         // Remote control: Invalid response received (could not deserialize)
         RC_PARSE_FAILED = 19,
@@ -194,12 +196,13 @@ namespace Log
 
         //
         // Sleep charge finished
+        // Meta1: Times woke up to check if battery back to acceptable levels
         SLEEP_CHARGE_FINISHED = 51,
 
         //
         // Could not read water quality sensor
         //
-        WATER_QUALITY_MEASURE_FAILED = 52,
+        WATER_QUALITY_MEASUREMENT_FAILED = 52,
 
         //
         // Could not read water level sensor
@@ -215,6 +218,168 @@ namespace Log
         // SPIFFS format failed
         //
         SPIFFS_FORMAT_FAILED = 55,
+
+        //
+        // Water quality sensor invalid response
+        //
+        WATER_QUALITY_INVALID_RESPONSE = 56,
+
+        //
+        // Could not get water quality sensor measurements
+        // Meta1: Batch number (x in SDI12 command aDx)
+        WATER_QUALITY_MEASUREMENT_DATA_REQ_FAILED = 57,
+
+        //
+        // Water quality sensor returned all zero vals
+        //
+        WATER_QUALITY_ZERO_VALS = 58,
+
+        //
+        // Water quality sensor data CRC check failed
+        //
+        WATER_QUALITY_CRC_FAILED = 59,
+
+        //
+        // Weather station invalid response
+        //
+        WEATHER_STATION_INVALID_RESPONSE = 61,
+
+        //
+        // Could not get measurement data after measurement
+        // Meta1: Batch number (x in SDI12 Command aDx)
+        WEATHER_STATION_MEASUREMENT_DATA_REQ_FAILED = 62,
+
+        // Remote control: new weather station read interval set
+        // Meta1: New value
+        RC_WEATHER_STATION_READ_INT_SET_SUCCESS = 63,
+
+        //
+        // Remote control: Could not set new weather station read interval value
+        // Meta1: Provided value
+        RC_WEATHER_STATION_READ_INT_SET_FAILED = 64,
+
+        //
+        // Wake up self test failed
+        //
+        WAKEUP_SELF_TEST_FAILED = 65,
+
+        //
+        // Weather station logging measurement 
+        //
+        WEATHER_STATION_MEASUREMENT_LOG = 66,
+
+        //
+        // Water sensors logging measurement
+        //
+        WATER_SENSORS_MEASUREMENT_LOG = 67,
+
+        //
+        // Provided schedule is invalid, default will be used
+        // Meta1: Schedule id (1: Normal, 2: Low, 3:unknown)
+        SCHEDULE_INVALID_USING_DEFAULT = 68,
+
+        //
+        // Could not determine battery mode
+        //
+        BATTERY_MODE_UNKNOWN = 69,
+
+        //
+        // Weather station meaasurement failed 
+        //
+        WEATHER_STATION_MEASUREMENT_FAILED = 70,
+
+        //
+        // Calling home finished
+        //
+        CALLING_HOME_END = 71,
+
+        //
+        // Device's mac address
+        // Meta1: First 4 bytes
+        // Meta2: Last 4 bytes
+        MAC_ADDRESS = 72,
+
+        //
+        // Soil moisture sensors logging measurement
+        //
+        SOIL_MOISTURE_SENSOR_MEASUREMENT_LOG = 73,
+
+        //
+        // Could not read soil moisture sensor
+        //
+        SOIL_MOISTURE_MEASUREMENT_FAILED = 74,
+
+        //
+        // Solar panel voltage
+        // Meta1: Voltage in mV
+        SOLAR_PANEL_VOLTAGE = 75,
+
+        //
+        // Default device config is used
+        //
+        USING_DEFAULT_DEVICE_CONFIG = 76,
+
+        //
+        // Device woke up from sleep charge to check battery status
+        //
+        SLEEP_CHARGE_CHECK = 77,
+
+        //
+        // Soil moisture sensor invalid response
+        //
+        SOIL_MOISTURE_INVALID_RESPONSE = 78,
+
+        //
+        // Could not get soil moisture sensor measurements
+        // Meta1: Batch number (x in SDI12 command aDx)
+        SOIL_MOISTURE_MEASUREMENT_DATA_REQ_FAILED = 79,
+
+        //
+        // Soil moisture sensor returned all zero vals
+        //
+        SOIL_MOISTURE_ZERO_VALS = 80,
+
+        // Remote control: new soil moisture sensors read interval set
+        // Meta1: New value
+        RC_SOIL_MOISTURE_READ_INT_SET_SUCCESS = 81,
+
+        // Remote control: Could not set new soil moisture read interval value
+        // Meta1: Provided value
+        RC_SOIL_MOISTURE_READ_INT_SET_FAILED = 82,
+
+        // FO Scan for new device started
+        FO_SNIFFER_SCANNING = 83,
+
+        // FO Scan finished
+        // Meta1: Found FO node id
+        FO_SNIFFER_SCAN_RESULT = 84,
+
+        // FO Scan finished, no 
+        FO_SNIFFER_SCAN_FINISHED = 85,
+
+        // FO enabled status
+        // Meta1: Prev status
+        // Meta2: New status
+        FO_ENABLED_STATUS = 86,
+
+        // FO disabled because RX failures reached threshold
+        // Meta1: Successive tries after which it was disabled
+        FO_DISABLED_RX_FAILED = 87,
+
+        // FO waited to sniff packet but packet not received
+        FO_SNIFFER_SNIFF_FAILED = 88,
+
+        // FO not in sync
+        FO_SNIFFER_NOT_IN_SYNC = 89,
+
+        // FO could not sync
+        FO_SNIFFER_SYNC_FAILED = 90,
+
+        // Time elapsed during data submission
+        // Meta1: Telemetry
+        // Meta2: Logs
+        DATA_SUBMISSION_ELAPSED = 91,
+        
 
         //
         // GSM errors
@@ -238,12 +403,66 @@ namespace Log
         //
         // Could not connect to GSM network
         //
+        
         GSM_GPRS_CONNECTION_FAILED = 103,
         
         //
         // GSM init failed
         //
-        GSM_INIT_FAILED = 104
+        GSM_INIT_FAILED = 104,
+
+        //
+        // GSM Module power turned ON
+        //
+        GSM_ON = 105,
+
+        //
+        // GSM Module power turned OFF
+        //
+        GSM_OFF = 106,
+
+        //
+        // Temporary codes only for debugging
+        // All 2XX codes
+        CALL_HOME_WAKEUP_MISSED = 200,
+
+        //
+        // Wakeup correction took place
+        // Meta1: Seconds corrected
+        WAKEUP_CORRECTION = 201,
+
+        //
+        // Wake up events missed
+        // Meta1: Reasons (WakeupReasons bitfield)
+        //
+        WAKEUP_EVENTS_MISSED = 202,
+
+        //
+        // Raw value from water level sensor
+        // Meta1: Value
+        WATER_LEVEL_RAW_READING = 203,
+
+        //
+        // Current schedule log
+        //
+        SCHEDULE_CALL_HOME_INT = 204,
+        SCHEDULE_WATER_SENSORS_INT = 205,
+        SCHEDULE_WEATHER_STATION_INT = 206,
+        SCHEDULE_FO_INT = 207,
+        SCHEDULE_SOIL_MOISTURE_INT = 208,
+
+        /*
+        * Meta1: Index of unexpected value
+        */
+        FO_ERROR_UNEXPECTED_VALUE = 209,
+
+        FO_ERROR_INVALID_PARAM_COUNT = 210,
+
+        /**
+         * Wake up count since last aggregated packet 
+         * Meta1: Wake up count
+         */
+        FO_WAKEUPS = 211
     };
 }
 

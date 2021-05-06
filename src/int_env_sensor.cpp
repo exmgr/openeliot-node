@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "log.h"
 #include "rtc.h"
+#include "common.h"
 
 namespace IntEnvSensor
 {
@@ -19,20 +20,19 @@ BME280 sensor;
 ******************************************************************************/
 RetResult init()
 {
-	bool isAddr1 = true;
 	sensor.setI2CAddress(BME280_I2C_ADDR1);
 
 	if (sensor.beginI2C(Wire) == false)
 	{
 		Utils::serial_style(STYLE_RED);
-		Serial.println(F("Could not communicate with BME280 on addr1"));
+		debug_println(F("Could not communicate with BME280 on addr1"));
 		Utils::serial_style(STYLE_RESET);
 
 		sensor.setI2CAddress(BME280_I2C_ADDR2); // TODO check if can be reused
 		if (sensor.beginI2C(Wire) == false)
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.println(F("Could not communicate with BME280 on addr2"));
+			debug_println(F("Could not communicate with BME280 on addr2"));
 			Utils::serial_style(STYLE_RESET);
 			return RET_ERROR;
 		}
@@ -106,20 +106,20 @@ RetResult log()
 		Log::log(Log::INT_ENV_SENSOR2, press, alt);
 
 		Utils::serial_style(STYLE_BLUE);
-		Serial.printf("Temp: %4.2fC | Hum: %4.2f%% | Press: %dhPa | Alt: %dm\n",
+		debug_printf("Temp: %4.2fC | Hum: %4.2f%% | Press: %dhPa | Alt: %dm\n",
 					temp, hum, press, alt);
 		Utils::serial_style(STYLE_RESET);
 	}
 	else
 	{
-		Serial.println(F("Could not read int. env. sensor."));
+		debug_println(F("Could not read int. env. sensor."));
 	}
 
 	// Log RTC tmp
-	if(EXTERNAL_RTC_ENABLED)
+	if(FLAGS.EXTERNAL_RTC_ENABLED)
 	{
-		float rtc_temp = RTC::get_external_rtc_temp();
-		Serial.printf("RTC Temp: %4.2f\n", RTC::get_external_rtc_temp());
+		Log::log(Log::RTC_TEMPERATURE, RTC::get_external_rtc_temp());
+		debug_printf("RTC Temp: %4.2f\n", RTC::get_external_rtc_temp());
 	}
 
 	return ret;

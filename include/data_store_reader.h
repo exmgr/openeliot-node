@@ -21,7 +21,7 @@ public:
     bool next_file();
     TStruct* next_entry();
 
-    bool begin();
+    RetResult begin();
     void reset();
 
     bool entry_crc_valid();

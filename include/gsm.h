@@ -1,7 +1,6 @@
 #ifndef _GSM_H
 #define _GSM_H
 
-#include "Adafruit_FONA.h"
 #include "struct.h"
 #include "app_config.h"
 #include "const.h"
@@ -9,8 +8,6 @@
 
 namespace GSM
 {
-    extern Adafruit_FONA_LTE fona;
-
     void init();
 
     RetResult connect();
@@ -29,7 +26,11 @@ namespace GSM
     TinyGsm* get_modem();
 
     int get_rssi();
-    bool sim_card_present();
+    bool is_sim_card_present();
+    bool is_on(uint32_t timeout = GSM_TEST_AT_TIMEOUT);
+    bool is_gprs_connected();
+    RetResult print_system_info();
+    RetResult factory_reset();
 }
 
 #endif

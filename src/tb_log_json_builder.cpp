@@ -1,4 +1,5 @@
 #include "tb_log_json_builder.h"
+#include "common.h"
 
 /******************************************************************************
  * Add packet to request
@@ -19,7 +20,7 @@ RetResult TbLogJsonBuilder::add(const Log::Entry *entry)
 
 	if(values.getOrAddMember("log").set(log_entry) == false)
 	{
-        Serial.println(F("Could not add log entries to JSON."));
+        debug_println(F("Could not add log entries to JSON."));
         return RET_ERROR;
 	}
 

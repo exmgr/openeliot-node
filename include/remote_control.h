@@ -8,6 +8,14 @@
 
 namespace RemoteControl
 {
+	enum ErrorCode
+	{
+		ERROR_NONE,
+		ERROR_OTHER,
+		ERROR_REQUEST_FAILED
+	};
+
+	// Note: Looks like this is obsolete
 	struct Data
 	{
 		Data(int _water_sensors_measure_int_mins, int _call_home_int_mins,
@@ -32,6 +40,8 @@ namespace RemoteControl
 
 	bool get_reboot_pending();
 	void set_reboot_pending(bool val);
+
+	int get_last_error();
 
 	void print(const Data *data);
 }

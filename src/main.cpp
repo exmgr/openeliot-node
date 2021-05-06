@@ -7,37 +7,49 @@
 #include "const.h"
 #include "flash.h"
 #include "globals.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
 #include "utils.h"
 #include "gsm.h"
 #include "rtc.h"
 #include "log.h"
 #include "tests.h"
 #include "test_utils.h"
-#include "sleep.h"
+#include "sleep_scheduler.h"
 #include "water_sensors.h"
 #include <Wire.h>
 #include <RtcDS3231.h>
-#include "WiFi.h"
-#include "json_builder_base.h"
-#include "tb_log_json_builder.h"
-#include "tb_sensor_data_json_builder.h"
 #include "device_config.h"
-#include "water_quality_sensor.h"
-#include "tb_diagnostics_json_builder.h"
-#include "water_level.h"
 #include "battery.h"
 #include "int_env_sensor.h"
 #include <SPIFFS.h>
-#include "http_request.h"
-#include "tb_sensor_data_json_builder.h"
 #include "ota.h"
+#include "atmos41.h"
+#include "rom/rtc.h"
+#include "fo_sniffer.h"
+#include "fo_uart.h"
+#include "fo_data.h"
+#include "config_mode.h"
+#include "driver/rtc_io.h"
+#include "esp_sleep.h"
 
-/* For testing */
+// For testing
+#include "http_request.h"
+#include "sleep_scheduler.h"
 #include "data_store_reader.h"
+#include "sdi12_log.h"
+#include "tb_sdi12_log_json_builder.h"
+#include "wifi_modem.h"
+#include "sdi12.h"
+#include "sdi12_sensor.h"
+#include "dfrobot_liquid.h"
+#include "teros12.h"
+#include "soil_moisture_data.h"
+#include "water_level.h"
+#include "aquatroll.h"
 
-void battery_sleep_charge();
-
+/******************************************************************************
+ * Setup
+ *****************************************************************************/
 void setup() 
 {
 	Serial.begin(115200);
@@ -45,139 +57,106 @@ void setup()
 	Utils::serial_style(STYLE_BLUE);
 	Utils::print_separator(F("BOOTING"));
 	Utils::serial_style(STYLE_RESET);
-	Serial.print(F("\n\n"));
+	debug_print(F("\n\n"));
 
 	//
 	// Print on-boot info
 	// 
+	DeviceConfig::init();
+
 	Utils::serial_style(STYLE_GREEN);
-	Serial.print(F("Reset reason: "));
-	Serial.println();
+	debug_print(F("Reset reason: "));
 	Utils::print_reset_reason();
-	Serial.println();
+	debug_println();
 	Utils::serial_style(STYLE_RESET);
 
-	// Configuration
-	Utils::print_separator(F("Configuration"));
-	Utils::serial_style(STYLE_RED);
-	if(NBIOT_MODE)
-		Serial.println(F("- NBIoT mode"));
+	#if DEBUG
+		Utils::serial_style(STYLE_RED);
+		Utils::print_block(F("Debug build"));
+		Utils::serial_style(STYLE_RESET);
+		debug_println();
+	#else
+		Utils::serial_style(STYLE_BLUE);	
+		Utils::print_block(F("Release build"));
+		Utils::serial_style(STYLE_RESET);
+		debug_println();
+	#endif
 
-	if(SLEEP_MINS_AS_SECS)
-		Serial.println(F("- Sleep minutes treated as seconds"));
-
-	if(MEASURE_DUMMY_WATER_QUALITY)
-		Serial.println(F("- Water Quality measurements return dummy values"));
-
-	if(MEASURE_DUMMY_WATER_LEVEL)
-		Serial.println(F("- Water Level measurements return dummy values"));
-
-	if(EXTERNAL_RTC_ENABLED)
-		Serial.println(F("- External RTC enabled"));
-
-	if(PUBLISH_TB_DIAGNOSTIC_TELEMETRY)
-		Serial.println("- Logs will be sent as TB telemetry (diagnostics)");
-
-	if(PRINT_GSM_AT_COMMS)
-		Serial.println(F("- AT command output to console enabled."));
-
-	Utils::serial_style(STYLE_RESET);
-	Serial.println();
+	Utils::print_flags();
+	debug_println();
 
 	// Device info
 	Utils::print_separator(F("DEVICE INFO"));
 
 	// Board name
-	Serial.print(F("Board: "));
-	Serial.println(BOARD_NAME);
+	debug_print(F("Board: "));
+	debug_println(BOARD_NAME);
 
-	Serial.print(F("Version: "));
-	Serial.println(FW_VERSION, DEC);
+	debug_print(F("Version: "));
+	debug_println(FW_VERSION, DEC);
 
-	// Get device info and output
-	const DeviceDescriptor *device_descriptor = Utils::get_device_descriptor();
-	if(device_descriptor == NULL)
+	char mac[20] = "";
+	Utils::get_mac(mac, sizeof(mac));
+	debug_print(F("MAC: "));
+	debug_println(mac);
+	debug_print(F("APN: "));
+	debug_println(DeviceConfig::get_cellular_apn());
+	Serial.print(F("TB Server: "));
+	Serial.println(TB_SERVER);
+	debug_print(F("TB Access Token: "));
+	debug_println(DeviceConfig::get_tb_device_token());
+
+	if(FLAGS.WATER_QUALITY_SENSOR_ENABLED)
 	{
-		char mac[18] = "";
-		Utils::get_mac(mac, sizeof(mac));
+		debug_print(F("AquaTROLL Model: "));
 
-		Serial.print(F("Unknown device. MAC: "));
-		Serial.println(mac);
-		Serial.println(F("Update device descriptors to continue. Terminating."));
-		while(1){}
+		if(AQUATROLL_MODEL == AQUATROLL_MODEL_400)
+		{
+			debug_println(F("400"));
+		}
+		else if(AQUATROLL_MODEL == AQUATROLL_MODEL_500)
+		{
+			debug_println(F("500"));
+		}
+		else if(AQUATROLL_MODEL == AQUATROLL_MODEL_600)
+		{
+			debug_println(F("600"));
+		}
+		else
+		{
+			debug_println_e(F("Invalid AquaTROLL model selected"));
+		}
 	}
-	else
-	{
-		Serial.print(F("ID: "));
-		Serial.println(device_descriptor->id, DEC);
-		Serial.print(F("MAC: "));
-		Serial.println(device_descriptor->mac);
-		Serial.print(F("TB Access Token: "));
-		Serial.println(device_descriptor->tb_access_token);
-		Serial.println();
-	}
 
-	Serial.print(F("Program size: "));
-	Serial.print(ESP.getSketchSize() / 1024, DEC);
+	debug_println();
 
-	Serial.println(F("KB"));
-	Serial.print(F("Free program space: "));
-	Serial.print(ESP.getFreeSketchSpace() / 1024, DEC);
-	Serial.println(F("KB"));
+	// Print program info
+	debug_print(F("Program size: "));
+	debug_print(ESP.getSketchSize() / 1024, DEC);
 
-	Serial.print(F("Free heap: "));
-	Serial.print(ESP.getFreeSketchSpace(), DEC);
-	Serial.println(F("B"));
+	debug_println(F("KB"));
+	debug_print(F("Free program space: "));
+	debug_print(ESP.getFreeSketchSpace() / 1024, DEC);
+	debug_println(F("KB"));
 
-	Serial.print(F("CPU freq: "));
-	Serial.print(ESP.getCpuFreqMHz());
-	Serial.println("MHz");
+	debug_print(F("Free heap: "));
+	debug_print(ESP.getFreeSketchSpace(), DEC);
+	debug_println(F("B"));
 
-	Serial.println();
+	debug_print(F("CPU freq: "));
+	debug_print(ESP.getCpuFreqMHz());
+	debug_println("MHz");
 
-	/******************************************************************************
-	* START
-	******************************************************************************/
-	//////////////////////////////////////////////
-	// Run tests
-	//////////////////////////////////////////////
-	// Tests::TestId tests[] = {
-	// 	// Tests::TestId::DATA_STORE,
-	// 	Tests::DEVICE_CONFIG
-	// };
-	// Tests::run(tests, sizeof(tests) / sizeof(tests[0]));
+	Utils::print_separator(NULL);
+	debug_println();
 
-	// // Tests::run_all();///////////////////////
-	// while(1){} // Dont go further
-	//////////////////////////////////////////////
-	/******************************************************************************
-	* END
-	******************************************************************************/
+	// Check if credentials are configured and if not use fallback
+	Utils::check_credentials();
 
-	// 	//// PIN BLINK
-	// int pins[] = {34, 35, 32, 33, 25, 26, 27, 14};
-
-	// for(int i=0; i < sizeof(pins) / sizeof(pins[0]); i++)
-	// {
-	// 	pinMode(pins[i], OUTPUT);
-	// }
-
-	// while(1)
-	// {
-	// 	for(int i=0; i < sizeof(pins) / sizeof(pins[0]); i++)
-	// 	{
-	// 		digitalWrite(pins[i], 1);
-	// 	}
-	// 	delay(500);>
-	// 	for(int i=0; i < sizeof(pins) / sizeof(pins[0]); i++)
-	// 	{
-	// 		digitalWrite(pins[i], 0);
-	// 	}
-	// 	delay(500);
-	// }
-	
-	//// 
-
+	// Handle config mode if needed
+	ConfigMode::handle();
+	// debug_println(F("Done"));
+	// while(1);
 
 	//
 	// Init 
@@ -185,6 +164,10 @@ void setup()
 
 	// Init main I2C1 bus
 	Wire.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, 100000);
+
+	// Init ext RTC first and sync system time
+	RTC::init();
+	RTC::sync_time_from_ext_rtc();
 
 	#ifdef TCALL_H
 		// Turn IP5306 power boost OFF to reduce idle current
@@ -197,19 +180,46 @@ void setup()
 	delay(100);
 	Flash::mount();
 	Flash::ls();
-	DeviceConfig::init();
-	RTC::init();
 	GSM::init();
 	WaterSensors::init();
+	WaterLevel::init();
+	Atmos41::init();
 
+	if(FO_SOURCE == FO_SOURCE_SNIFFER)
+	{
+		FoSniffer::init();
+
+		// If no FO node id is set, scan
+		if(DeviceConfig::get_fo_sniffer_id() == 0 && DeviceConfig::get_fo_enabled())
+		{
+			debug_println_e(F("No FO weather station id is set, scanning."));
+			FoSniffer::scan_fo_id(true);
+		}
+	}
+	else if(FO_SOURCE == FO_SOURCE_UART)
+	{
+		FoUart::init();
+	}
+	
 	// Log boot now that memory has been inited
-	Log::log(Log::Code::BOOT, FW_VERSION);
+	Log::log(Log::Code::BOOT, FW_VERSION, (int)rtc_get_reset_reason(0));
+
+	// Log mac address
+	Utils::log_mac();
 
 	// Log and print battery
 	Battery::log_adc();
+	Battery::log_gauge();
+	Battery::log_solar_adc();
+	IntEnvSensor::log();
 
 	// Device info
 	DeviceConfig::print_current();
+
+	//
+	// Boot tests
+	//
+	Utils::boot_self_test();
 
 	// Check if boot is after OTA
 	if(DeviceConfig::get_ota_flashed())
@@ -220,121 +230,148 @@ void setup()
 	//
 	// Check if device needs to be in sleep mode in case this is after a brown out
 	//
-	battery_sleep_charge();
+	Serial.println(F("Checking sleep charge"));
+	Battery::sleep_charge();
 
-	//////////////////////////////////////////////////////////////////////////
-	// TESTING AREA
+	///////////////////////////////////////////////////////////////////
+	// Testing areaa
+	//
+	DeviceConfig::set_fo_enabled(true);
+	DeviceConfig::commit();
 
+	// int packets = 2;
 	// while(1)
 	// {
-	// 	GSM::update_ntp_time();
+	// 	if(FoUart::handle_scheduled_event() == RET_OK)
+	// 	{
+	// 		packets--;
+	// 	}
 
-		// tm tm_now;
-		// // delay(15000);
-		// if(GSM::get_time(&tm_now) == RET_OK)
-		// {
-		// 	Serial.println(F("Got time"));
-
-		// 	Serial.printf("%02d/%02d/%04d - %02d:%02d:%02d\n", tm_now.tm_mday, tm_now.tm_mon, tm_now.tm_year + 1900,
-		// 		tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-		// }
-		// else
-		// {
-		// 	Serial.println(F("Could not get time from GSM."));
-		// }
+	// 	if(packets ==  0)
+	// 	{
+			
+	// 		FoUart::commit_buffer();
+	// 		break;
+	// 	}
 
 	// 	delay(1000);
 	// }
 
-	// GSM::off();
+	// Serial.println(F("Done"));
+
+	// Set schedule
+	// Utils::serial_style(SerialStyle::STYLE_BLUE);
+	// debug_println(F("Setting custom schedule"));
+	// DeviceConfig::set_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_CALL_HOME, 30);
+	// DeviceConfig::set_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_SOIL_MOISTURE_SENSOR, 1);
+	// DeviceConfig::set_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS, 0);
+	// DeviceConfig::set_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WEATHER_STATION, 0);
+	// DeviceConfig::commit();
+
+	// SleepScheduler::WakeupScheduleEntry cur_schedule[WAKEUP_SCHEDULE_LEN];
+	// DeviceConfig::get_wakeup_schedule(cur_schedule);
+	// SleepScheduler::print_schedule(cur_schedule);
+	
+	// Utils::serial_style(SerialStyle::STYLE_RESET);
+
+	// debug_println_i(DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_CALL_HOME));
+	// debug_println_i(DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS));
+	// debug_println_i(DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_WEATHER_STATION));
+	// debug_println_i(DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_FO));
+	// debug_println_i(DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_SOIL_MOISTURE_SENSOR));
+
 
 	// Serial.println(F("Done"));
 	// while(1);
-	/////////////////////////////////////////////////////////////////////////////
 
-	///////////////////////////////////////////////////////////
-	// if(1)
-	// {
-	// 	if(GSM::on() != RET_OK)
-	// 	{
-	// 		Serial.println(F("Could not turn on gsm."));
-	// 		while(1);
-	// 	}
+	// pinMode(13, INPUT);
+	// FoSniffer::init();
+	// delay(1);
 
-	// 	if(GSM::connect_persist() != RET_OK)
-	// 	{
-	// 		Serial.println(F("Could not connect GPRS."));
-	// 		while(1);
-	// 	}
-	// }
+	
 
-	// RemoteControl::start();
-	// CallHome::handle_client_attributes();
-
-	// Serial.println(F("Done"));
-	// while(1);
-	///////////////////////////////////////////////////////////
-
-	// Format SPIFFS
-	// SPIFFS.format();
-
-	////// TEST BME280 
 	// while(1)
 	// {
-	// 	float temp = 0, hum = 0;
-	// 	int alt = 0, press = 0;
-	// 	IntEnvSensor::read(&temp, &hum, &press, &alt);
+	// 	// FoSniffer::wait_for_packet(2000);
+	// 	// FoUart::request_packet(3000);
+	// 	// if(RET_OK == FoSniffer::wait_for_packet(3000, true))
+	// 	if(RET_OK == FoSniffer::scan_fo_id(20000, true))
+	// 	{
+	// 		debug_print_e(F("Received packet from: "));
+	// 		debug_println(FoSniffer::get_last_packet()->node_address, HEX);
+	// 	}
+	// 	else
+	// 	{
+	// 		Serial.println(F("Could not wait for packet"));
+	// 	}
 
-	// 	Serial.print(F("Temp: "));
-	// 	Serial.println(temp);
-	// 	Serial.print(F("Hum: "));
-	// 	Serial.println(hum);
-	// 	Serial.print(F("Alt: "));
-	// 	Serial.println(alt, DEC);
-	// 	Serial.print(F("Press: "));
-	// 	Serial.println(press, DEC);
-
-	// 	Serial.println(F("-------------------------------------"));
-
-	// 	delay(1000);
-	// }
-	////// END TEST BME280
-
-	////// TEST WATER QUALITY
-	// WaterQualitySensor::init();
-	// while(1)
-	// {
-	// 	WaterQualitySensor::on();
-	// 	delay(100);
-
-	// 	SensorData::Entry entry;
-	// 	WaterQualitySensor::measure(&entry);
+	// 	Serial.println(F("============================================================="));
+	// 	Serial.println(F("Done"));
 		
-	// 	SensorData::print(&entry);
-	// 	Serial.println(F("-----------------------------------------------------"));
-
-	// 	delay(100);
-	// 	WaterQualitySensor::off();
-	// 	delay(2000);
 	// }
-	////// TEST WATER QUALITY END 
+	
+	// Serial.println(F("Done"));
 
+	// while (1)
+	// {
+	// 	Serial.println(F("ON"));
+	// 	pinMode(13, OUTPUT);
+	// 	digitalWrite(13, 0);
+	// 	delay(3000);
 
-	// ////// TEST WATER LEVEL
+	// 	pinMode(13, INPUT);
+	// 	Serial.println(F("OFF"));
+	// 	delay(3000);
+	// }
+
 	// WaterSensors::on();
 	// while(1)
 	// {
-	// 	SensorData::Entry entry;
+	// 	WaterSensorData::Entry data = {0};
+	// 	// WaterLevel::measure(&data);
+	// 	Aquatroll::measure(&data);
 
-	// 	WaterLevel::measure(&entry);
+	// 	// debug_print(F("Level: \t\t\t"));
+	// 	// debug_println((int)data.water_level/10, DEC);
 
-	// 	Serial.print(F("Water level: "));
-	// 	Serial.println(entry.water_level);
-		
-	// 	delay(1000);
+	// 	debug_print(F("Measured: "));
+	// 	debug_println(data.water_level, DEC);
+	// 	WaterSensorData::print(&data);
+
+	// 	delay(3000);
 	// }
-	// WaterSensors::off();
-	// ////// TEST WATER LEVEL END
+		
+	// while(1)
+	// {
+	// 	WaterSensors::on();
+	// 	delay(3000);
+	// 	// WaterSensors::off();
+	// 	// delay(3000);
+		
+	// Serial.println(F("Sleep"));
+	// Serial.flush();
+
+	// 	WaterSensors::off();
+		// esp_sleep_enable_timer_wakeup(3000000);
+		// esp_light_sleep_start();
+		// Serial.println(F("Wakeup"));
+		// Serial.flush();
+	// }
+
+	//////////////////////////////////////////////
+	// Run tests
+	//////////////////////////////////////////////
+	// Tests::TestId tests[] = {
+	// 	// Tests::TestId::DATA_STORE,
+	// 	Tests::DEVICE_CONFIG
+	// };
+	// Tests::run(tests, sizeof(tests) / sizeof(tests[0]));
+
+	// // Tests::run_all();///////////////////////
+	// while(1){} // Dont go further
+	//////////////////////////////////////////////
+
+	// END TESTING AREA
 
 	//
 	// Check if reboot clean
@@ -344,7 +381,7 @@ void setup()
 	if(DeviceConfig::get_clean_reboot())
 	{
 		Utils::serial_style(STYLE_GREEN);
-		Serial.println(F("Clean boot"));
+		debug_println(F("Clean boot"));
 		Utils::serial_style(STYLE_RESET);
 
 		// Reset flag
@@ -354,60 +391,97 @@ void setup()
 	else
 	{
 		Utils::serial_style(STYLE_RED);
-		Serial.println(F("Boot is not clean (not intentional)"));
+		debug_println(F("Boot is not clean (not intentional)"));
 		Utils::serial_style(STYLE_RESET);
 	}
 
-	// For CCID, RTC
-	if(GSM::on() != RET_ERROR)
+	//
+	// Turn on GSM to check if SIM card present and sync time
+	// In debug mode sync time from external RTC
+	if(FLAGS.DEBUG_MODE && RTC::tstamp_valid(RTC::get_external_rtc_timestamp()))
 	{
-		// 
-		// Get SIM CCID to check for its presence
-		// 
-		if(!GSM::sim_card_present())
-		{
-			Utils::serial_style(STYLE_RED);
-			Serial.println(F("No SIM card detected!"));
-			Utils::serial_style(STYLE_RESET);
+		debug_println(F("Debug mode, using ext RTC time."));
+		RTC::sync_time_from_ext_rtc();
+	}
+	else
+	{
+		if(GSM::on() != RET_ERROR)
+		{ 
+			// 
+				// Get SIM CCID to check for its presence
+			// 
+			if(!GSM::is_sim_card_present())
+			{
+				Utils::serial_style(STYLE_RED);
+				debug_println(F("No SIM card detected!"));
+				Utils::serial_style(STYLE_RESET);
 
-			Log::log(Log::GSM_NO_SIM_CARD);
-		}
+				Log::log(Log::GSM_NO_SIM_CARD);
+			}
 
-		//
-		// Sync RTC
-		//
-		if(RTC::sync() != RET_OK) // RTC turns GSM ON
-		{
-			Utils::serial_style(STYLE_RED);
-			Serial.println(F("Failed to sync time, system has no source of time."));
-			Utils::serial_style(STYLE_RESET);
-		}
-		else
-		{
-			Serial.println(F("Time sync successful."));
-			RTC::print_time();
+			//
+			// Sync RTC
+			//
+			if(RTC::sync() != RET_OK) // RTC turns GSM ON
+			{
+				Utils::serial_style(STYLE_RED);
+				debug_println(F("Failed to sync time, system has no source of time."));
+				Utils::serial_style(STYLE_RESET);
+			}
+			else
+			{
+				debug_println(F("Time sync successful."));
+				RTC::print_time();
+			}
 		}
 	}
-	
-	GSM::off();
 
 	//////////////////////////////////////////////////////////////////////////////////////////
-
-	//////////////////////////////////////////////////////////////////////////////////////////
-	// Log time sync event
-	Log::log(Log::Code::TIME_SYNC);
 
 	// TODO: Make all tasks run on boot and remove this
-	Utils::serial_style(STYLE_MAGENTA);
-	Serial.println(F("Reason: Read sensors"));
-	Utils::serial_style(STYLE_RESET);
-	WaterSensors::log();
-	
+	if(FLAGS.WATER_QUALITY_SENSOR_ENABLED || FLAGS.WATER_LEVEL_SENSOR_ENABLED)
+	{
+		Utils::serial_style(STYLE_MAGENTA);
+		debug_println(F("Reading: Read water sensors"));
+		Utils::serial_style(STYLE_RESET);
+		WaterSensors::log();
+	}
+	if(FLAGS.WEATHER_STATION_ENABLED)
+	{
+		Utils::serial_style(STYLE_CYAN);
+		debug_println(F("Reading: Read weather station"));
+		Utils::serial_style(STYLE_RESET);
+		Atmos41::measure_log();
+	}
+	if(FLAGS.SOIL_MOISTURE_SENSOR_ENABLED)
+	{
+		Utils::serial_style(STYLE_CYAN);
+		debug_println(F("Reading: Read soil moisture sensor"));
+		Utils::serial_style(STYLE_RESET);
+		Teros12::log();
+	}
+
+	// while(1)
+	// {
+	// 	Serial.println(F("requesting packet"));
+		
+	// 	if(FoUart::request_packet() == RET_OK)
+	// 	{
+	// 		Serial.println(F("Success requesting packet"));
+
+	// 		FoSniffer::print_packet(FoUart::get_last_packet());
+	// 	}
+	// 	else
+	// 	{
+	// 		Serial.println(F("Request packet failed"));
+	// 	}
+	// }
+
 	Utils::serial_style(STYLE_BLUE);
-	Serial.println(F("Reason: Call home"));
+	debug_println(F("Reason: Call home"));
 	Utils::serial_style(STYLE_RESET);
+
 	CallHome::start();
-	Utils::print_separator(F("Setup finished"));
 
 	Utils::print_separator(F("SETUP COMPLETE"));
 }
@@ -421,11 +495,19 @@ void setup()
  *****************************************************************************/
 RetResult wakeup_self_test()
 {
+	RetResult ret = RET_OK;
+
 	// Check if RTC returns invalid value
-	if(RTC::get_timestamp() <= FAIL_CHECK_TIMESTAMP)
+	if(!RTC::tstamp_valid(RTC::get_timestamp()))
 	{
+		if(GSM::on() != RET_OK)
+		{
+			debug_println(F("Could not turn on GSM"));
+			ret = RET_ERROR;
+		}
+
 		Utils::serial_style(STYLE_RED);
-		Serial.println(F("RTC returns invalid timestamp, syncing..."));
+		debug_println(F("RTC returns invalid timestamp, syncing..."));
 		Utils::serial_style(STYLE_RESET);
 
 		//
@@ -433,65 +515,22 @@ RetResult wakeup_self_test()
 		//	
 		if(RTC::sync() != RET_OK)
 		{
-			Serial.println(F("Failed to sync time."));
-			return RET_ERROR;
+			debug_println(F("Failed to sync time."));
+			ret = RET_ERROR;
 		}
 		else
 		{
-			Serial.println(F("Time sync successful."));
+			debug_println(F("Time sync successful."));
 			RTC::print_time();
 		}
 	}
 
-	return RET_OK;
-}
-
-/******************************************************************************
- * Battery is low, device goes into sleep charge mode where it sleeps and all
- * functions are disabled until battery is over the charged threshold.
- * Device wakes up from sleep every X mins to check.
- *****************************************************************************/
-void battery_sleep_charge()
-{
-	if(Battery::get_current_mode() != BATTERY_MODE::BATTERY_MODE_SLEEP_CHARGE)
-		return;
-
-	Serial.println(F("Battery critical, going into sleep charge mode."));
-	Log::log(Log::SLEEP_CHARGE);
-	Battery::log_adc();
-
-	// Set sleep time and go to sleep
-	int time_to_sleep_ms = SLEEP_CHARGE_CHECK_INT_MINS * 60000;
-
-	if(SLEEP_MINS_AS_SECS)
-	 	time_to_sleep_ms /= 60;
-
-	esp_sleep_enable_timer_wakeup(time_to_sleep_ms * 1000);
-
-	while(true)
+	if(ret != RET_OK)
 	{
-		Serial.print(F("Sleeping for (sec): "));
-		Serial.println(time_to_sleep_ms / 1000);
-		Serial.flush();
-		esp_light_sleep_start();
-		Serial.println(F("Wake up"));
-
-		uint16_t mv = 0, pct = 0;
-		Battery::read_adc(&mv, &pct);		
-
-		if(pct < BATTERY_LEVEL_SLEEP_RECHARGED)
-		{
-			Serial.println(F("Battery level not quite there yet... Going back to sleep."));
-		}
-		else
-		{
-			Serial.println(F("Battery charged up to threshold. Exiting sleep charge mode."));
-
-			Log::log(Log::SLEEP_CHARGE_FINISHED);
-			Battery::log_adc();
-			break;
-		}
+		Log::log(Log::WAKEUP_SELF_TEST_FAILED);
 	}
+
+	return ret;
 }
 
 /******************************************************************************
@@ -502,17 +541,28 @@ void loop()
 	// Handle battery sleep charge if needed
 	if(Battery::get_current_mode() == BATTERY_MODE::BATTERY_MODE_SLEEP_CHARGE)
 	{
-		battery_sleep_charge();
+		Battery::sleep_charge();
 	}
 
-	Sleep::sleep();
+	//
+	// Go to sleep
+	//
+	SleepScheduler::sleep_to_next();
+
+	//
+	// Wake up
+	//
+
+	// Do not log when waking up for FO Sniff
+	if(!SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_FO))
+	{
+		IntEnvSensor::log();
+	}
 
 	// Do wake up self test
 	if(wakeup_self_test() != RET_OK)
 	{
-		Utils::serial_style(STYLE_RED);
-		Serial.println(F("Wake up self test failed, going back to sleep."));
-		Utils::serial_style(STYLE_RESET);
+		debug_println_e(F("Wake up self test failed, going back to sleep."));
 	}
 	else
 	{
@@ -520,22 +570,83 @@ void loop()
 		// Tasks executed only when wakeup self test passed
 		//
 
-		if(Sleep::wakeup_reason_is(Sleep::REASON_READ_WATER_SENSORS))
+		//
+		// Sniff FO weather station
+		//
+		if(SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_FO))
 		{
-			Utils::serial_style(STYLE_MAGENTA);
-			Serial.println(F("Reason: Read sensors"));
-			Utils::serial_style(STYLE_RESET);
-			WaterSensors::log();
-		}	
+			debug_println_i(F("Reason: Sniff FO weather station."));
+			
+			if(!DeviceConfig::get_fo_enabled())
+			{
+				debug_println_e(F("FO sniffer disabled, sniffing aborted."));
+			}
+			else
+			{
+				if(FO_SOURCE == FO_SOURCE_SNIFFER)
+					FoSniffer::handle_sniff_event();
+				else if(FO_SOURCE == FO_SOURCE_UART)
+					FoUart::handle_scheduled_event();
+			}
+		}
+
+		//
+		// Measure water quality
+		//
+		if(SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_READ_WATER_SENSORS))
+		{
+			debug_println_i(F("Reason: Read water sensors"));
+
+			if(!FLAGS.WATER_QUALITY_SENSOR_ENABLED &&  !FLAGS.WATER_LEVEL_SENSOR_ENABLED)
+			{
+				debug_println_e(F("Water sensors disabled, measurement aborted."));
+			}
+			else
+			{
+				WaterSensors::log();
+			}
+		}
+
+		//
+		// Measure soil moisture
+		//
+		if(SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_READ_SOIL_MOISTURE_SENSOR))
+		{
+			debug_println_i(F("Reason: Read soil moisture"));
+
+			if(!FLAGS.SOIL_MOISTURE_SENSOR_ENABLED)
+			{
+				debug_println_e(F("Soil moisture sensor disabled, measurement aborted."));
+			}
+			else
+			{
+				Teros12::log();
+			}
+		}
+
+		//
+		// Measure weather data
+		//
+		if(SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_READ_WEATHER_STATION))
+		{
+			debug_println_i(F("Reason: Read weather station"));
+
+			if(!FLAGS.WEATHER_STATION_ENABLED)
+			{
+				debug_println_e(F("Weather station disabled, measurement aborted."));
+			}
+			else
+			{
+				Atmos41::measure_log();
+			}
+		}
 	}
 	
-	if(Sleep::wakeup_reason_is(Sleep::REASON_CALL_HOME))
+	if(SleepScheduler::wakeup_reason_is(SleepScheduler::REASON_CALL_HOME))
 	{
-		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("Reason: Call home"));
-		Utils::serial_style(STYLE_RESET);
+		debug_println_i(F("Reason: Call home"));
 		CallHome::start();
 	}
 
-	Serial.println(F("------------------------------------------------"));
+	debug_println(F("------------------------------------------------"));
 }

@@ -2,8 +2,9 @@
 #include "log.h"
 #include "data_store_reader.h"
 #include "utils.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
 #include "esp_partition.h"
+#include "common.h"
 
 /******************************************************************************
 * Various functions to help with debugging
@@ -19,10 +20,14 @@ namespace TestUtils
 
 		const Log::Entry *entry = NULL;
 
-		while(entry = reader.next_entry()) // TODO: New implementation
+		while(reader.next_file())
 		{
-			Log::print(entry);
-			Utils::print_separator(NULL);
+			// Iterate all file entries
+			while((entry = reader.next_entry()))
+			{
+				Log::print(entry);
+				Utils::print_separator(NULL);
+			}
 		}
 	}
 
@@ -31,7 +36,7 @@ namespace TestUtils
 	******************************************************************************/
 	void create_dummy_sensor_data(int count)
 	{
-		SensorData::Entry data = {0};
+		WaterSensorData::Entry data = {0};
 
 		for(int i = 0; i < count; i++)
 		{
@@ -42,7 +47,7 @@ namespace TestUtils
 			data.ph = i;
 			data.water_level = i;
 
-			SensorData::add(&data);
+			WaterSensorData::add(&data);
 		}
 	}
 
@@ -51,13 +56,12 @@ namespace TestUtils
 	 *****************************************************************************/
 	void print_partition_info()
 	{
-		esp_partition_type_t type;
 		esp_partition_iterator_t iterator;
 		const esp_partition_t *partition = NULL;
 
 		Utils::serial_style(STYLE_BLUE);
-		Serial.printf("%-10s %-10s %-10s %-10s %-10s %-10s\n", "Label", "Type", "Subtype", "Addr", "Size", "Encrypted");
-		Serial.printf("%.*s\n", 65, "======================================================================================");
+		debug_printf("%-10s %-10s %-10s %-10s %-10s %-10s\n", "Label", "Type", "Subtype", "Addr", "Size", "Encrypted");
+		debug_printf("%.*s\n", 65, "======================================================================================");
 		Utils::serial_style(STYLE_RESET);
 
 		iterator = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
@@ -66,7 +70,7 @@ namespace TestUtils
 			partition = esp_partition_get(iterator);	
 
 			// Decide partition subtype
-			Serial.printf("%-10s %-10s %-10d %-10d %-10d %-10s\n",
+			debug_printf("%-10s %-10s %-10d %-10d %-10d %-10s\n",
 					partition->label, "App", partition->subtype,
 					partition->address, partition->size, partition->encrypted ? "Yes" : "No");
 
@@ -78,7 +82,7 @@ namespace TestUtils
 			partition = esp_partition_get(iterator);	
 
 			// Decide partition subtype
-			Serial.printf("%-10s %-10s %-10d %-10d %-10d %-10s\n",
+			debug_printf("%-10s %-10s %-10d %-10d %-10d %-10s\n",
 					partition->label, "Data", partition->subtype,
 					partition->address, partition->size, partition->encrypted ? "Yes" : "No");
 
@@ -93,8 +97,8 @@ namespace TestUtils
 	******************************************************************************/
 	void print_stack_size()
 	{
-		Serial.print(F("Stack size: "));
-		Serial.println(uxTaskGetStackHighWaterMark(NULL), DEC);
+		debug_print(F("Stack size: "));
+		debug_println(uxTaskGetStackHighWaterMark(NULL), DEC);
 	}
 
 	/******************************************************************************
@@ -109,15 +113,15 @@ namespace TestUtils
 
 		for(int i=0; i < bytes; i += step)
 		{
-			Serial.print(F("Allocating "));
-			Serial.print(i / 1024);
-			Serial.println(F(" KB"));
+			debug_print(F("Allocating "));
+			debug_print(i / 1024);
+			debug_println(F(" KB"));
 
 			// p = (uint8_t*)malloc(i);
 			p = (uint8_t*)malloc(step);
 			if(p == NULL)
 			{
-				Serial.println(F("FAILED"));
+				debug_println(F("FAILED"));
 				break;
 			}
 			// free(p);

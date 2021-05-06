@@ -3,6 +3,7 @@
 #include "const.h"
 #include "rtc.h"
 #include "utils.h"
+#include "common.h"
 
 namespace Log
 {
@@ -58,10 +59,11 @@ namespace Log
 
 		_last_log_tstamp = cur_tstamp;
 
+
 		if(!_enabled)
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.print(F("Logging disabled, ignoring log: "));
+			debug_print(F("Logging disabled, ignoring log: "));
 			print(&entry);
 			Utils::serial_style(STYLE_RESET);
 			return RET_ERROR;
@@ -95,21 +97,21 @@ namespace Log
 	 *******************************************************************************/
 	void print(const Log::Entry *entry)
 	{
-		Serial.print(F("Code: "));
-		Serial.println(entry->code);
+		debug_print(F("Code: "));
+		debug_print(entry->code);
 
-		Serial.print(F("Meta 1: "));
-		Serial.println(entry->meta1);
+		debug_print(F(" -- Meta 1: "));
+		debug_print(entry->meta1);
 
-		Serial.print(F("Meta 2: "));
-		Serial.println(entry->meta2);
+		debug_print(F(" -- Meta 2: "));
+		debug_println(entry->meta2);
 
-		Serial.printf("Timestamp: %lld\n", entry->timestamp);
-		Serial.print(" (");
+		debug_printf("Timestamp: %lld\n", entry->timestamp);
+		debug_print(" (");
 
 		time_t tstamp_sec = entry->timestamp / 1000;
-		Serial.print(ctime(&tstamp_sec));
-		Serial.println(" )");
+		debug_print(ctime(&tstamp_sec));
+		debug_println(" )");
 	}
 
 	/******************************************************************************

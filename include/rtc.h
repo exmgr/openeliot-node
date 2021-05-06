@@ -14,6 +14,7 @@ namespace RTC
     float get_external_rtc_temp();
 
     void print_time();
+    void print_temp();
 
     bool tstamp_valid(uint32_t tstamp);
 
@@ -25,6 +26,8 @@ namespace RTC
     RetResult init_external_rtc();
     RetResult set_external_rtc_time(uint32_t timestamp);
     RetResult set_system_time(uint32_t timestamp);
+
+    uint32_t get_external_rtc_timestamp();
     // TODO: up to here
 }
 

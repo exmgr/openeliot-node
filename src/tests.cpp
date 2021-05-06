@@ -10,12 +10,13 @@
 #include "utils.h"
 #include "data_store.h"
 #include "data_store_reader.h"
-#include "sensor_data.h"
-#include "sleep.h"
+#include "water_sensor_data.h"
+#include "sleep_scheduler.h"
 #include "device_config.h"
 #include "limits.h"
 #include "remote_control.h"
 #include "device_config.h"
+#include "common.h"
 
 namespace Tests
 {
@@ -64,7 +65,7 @@ namespace Tests
 	const char DATA_STORE_ENTRIES_PER_FILE = 12;
 
 	// Size of a single entry in the data store (header + body)
-	const int DATA_STORE_ENTRY_SIZE = sizeof(DataStore<SensorData::Entry>::Entry);
+	const int DATA_STORE_ENTRY_SIZE = sizeof(DataStore<WaterSensorData::Entry>::Entry);
 
 	// Size in bytes of a file that doesn't fit any more entries
 	const int DATA_STORE_FULL_FILE_SIZE = DATA_STORE_ENTRY_SIZE *  DATA_STORE_ENTRIES_PER_FILE;
@@ -87,7 +88,7 @@ namespace Tests
 		//
 		// Update RTC
 		//
-		Serial.println(F("Updating RTC time"));
+		debug_println(F("Updating RTC time"));
 		RetResult success = RET_ERROR;
 		GSM::init();
 		if(GSM::on() == RET_OK)
@@ -95,20 +96,24 @@ namespace Tests
 			if(GSM::connect_persist() == RET_OK)
 			{
 				if(RTC::sync() != RET_OK)
-					Serial.println("Could not update time from GSM.");
+				{
+					debug_println("Could not update time from GSM.");
+				}
 				else
+				{
 					success = RET_OK;
+				}
 			}
 
 			GSM::off();
 		}
 		if(!success)
 		{
-			Serial.println(F("Could not update RTC time."));
+			debug_println(F("Could not update RTC time."));
 		}
 		else
 		{
-			Serial.println(F("RTC updated: "));
+			debug_println(F("RTC updated: "));
 			RTC::print_time();
 		}
 
@@ -125,11 +130,11 @@ namespace Tests
 		// Mount
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Mounting"));
+		debug_println(F("# Mounting"));
 		Utils::serial_style(STYLE_RESET);
-		if(!SPIFFS.begin())
+		if(Flash::mount() != RET_OK)
 		{
-			Serial.println(F("# Could not begin SPIFFS."));
+			debug_println(F("# Could not begin SPIFFS."));
 			return RET_ERROR;
 		}
 
@@ -137,25 +142,25 @@ namespace Tests
 		// Format
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Formatting"));
+		debug_println(F("# Formatting"));
 		Utils::serial_style(STYLE_RESET);
 		if(!SPIFFS.format())
 		{
-			Serial.println(F("# Format failed."));
+			debug_println(F("# Format failed."));
 			return RET_ERROR;
 		}
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Format done"));
+		debug_println(F("# Format done"));
 		Utils::serial_style(STYLE_RESET);
 
 		//
 		// Create data store 
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Creating dummy entries"));
+		debug_println(F("# Creating dummy entries"));
 		Utils::serial_style(STYLE_RESET);
-		DataStore<SensorData::Entry> store(DATA_STORE_PATH, DATA_STORE_ENTRIES_PER_FILE);
-		SensorData::Entry dummy_data_entries[DATA_STORE_ELEMENTS_TO_WRITE] = {0};
+		DataStore<WaterSensorData::Entry> store(DATA_STORE_PATH, DATA_STORE_ENTRIES_PER_FILE);
+		WaterSensorData::Entry dummy_data_entries[DATA_STORE_ELEMENTS_TO_WRITE] = {0};
 
 		//
 		// Build dummy data, add to store and check after every entry if data written is expected
@@ -167,7 +172,7 @@ namespace Tests
 		for(int i = 0; i < DATA_STORE_ELEMENTS_TO_WRITE; i++)
 		{
 			// Build new entry dummy data
-			SensorData::Entry new_entry = {0};
+			WaterSensorData::Entry new_entry = {0};
 			new_entry.timestamp = i; // This entry will be later searched for by this id
 			new_entry.temperature = random(1000000);
 			new_entry.dissolved_oxygen = random(1000000);
@@ -179,7 +184,7 @@ namespace Tests
 			store.add(&new_entry);
 			if(store.commit() != RET_OK)
 			{
-				Serial.println(F("Could not commit data."));
+				debug_println(F("Could not commit data."));
 				return RET_ERROR;
 			}
 
@@ -194,13 +199,13 @@ namespace Tests
 			// Other than full files, only one smaller file can exist and it must be of this size.
 			// When 0, last file is full  so there can be more of these which is checked by above
 			int expected_smallest_file_size = ((i+1) * DATA_STORE_ENTRY_SIZE) - expected_full_files * DATA_STORE_FULL_FILE_SIZE;
-			Serial.print(F("Smallest file must be: "));
-			Serial.println(expected_smallest_file_size);
+			debug_print(F("Smallest file must be: "));
+			debug_println(expected_smallest_file_size);
 			// Iterate all files and check if above above data is true
 			File dir = SPIFFS.open(DATA_STORE_PATH);
 			if(!dir)
 			{
-				Serial.println(F("Could not open data store dir."));
+				debug_println(F("Could not open data store dir."));
 				return RET_ERROR;
 			}
 
@@ -229,7 +234,7 @@ namespace Tests
 					// If more than one found, test fails early, no reason to go further
 					if(found_other_size_files > 1)
 					{
-						Serial.println(F("More than 1 non-full files found. Should be only 1. Aborting."));
+						debug_println(F("More than 1 non-full files found. Should be only 1. Aborting."));
 						return RET_ERROR;
 					}
 
@@ -240,12 +245,12 @@ namespace Tests
 			// Check results for current run
 			if(expected_full_files != found_full_files)
 			{
-				Serial.println(F("Number of files that reached their max size is not the expected one."));
-				Serial.print(F("Expected: "));
-				Serial.println(expected_full_files, DEC);
-				Serial.print(F("Found: "));
-				Serial.println(found_full_files, DEC);
-				Serial.println(F("Aborting"));
+				debug_println(F("Number of files that reached their max size is not the expected one."));
+				debug_print(F("Expected: "));
+				debug_println(expected_full_files, DEC);
+				debug_print(F("Found: "));
+				debug_println(found_full_files, DEC);
+				debug_println(F("Aborting"));
 
 				Flash::ls();
 
@@ -253,12 +258,12 @@ namespace Tests
 			}
 			if(found_smallest_file_size != expected_smallest_file_size)
 			{
-				Serial.println(F("Smallest file (currently being filled) is not of expected size."));
-				Serial.print(F("Expected: "));
-				Serial.println(expected_smallest_file_size, DEC);
-				Serial.print(F("Found: "));
-				Serial.println(found_smallest_file_size, DEC);
-				Serial.println(F("Aborting"));
+				debug_println(F("Smallest file (currently being filled) is not of expected size."));
+				debug_print(F("Expected: "));
+				debug_println(expected_smallest_file_size, DEC);
+				debug_print(F("Found: "));
+				debug_println(found_smallest_file_size, DEC);
+				debug_println(F("Aborting"));
 
 				Flash::ls();
 
@@ -266,20 +271,20 @@ namespace Tests
 			}
 			if(expected_bytes_written != found_bytes_written)
 			{
-				Serial.println(F("Number of written bytes different than expected."));
-				Serial.print(F("Expected: "));
-				Serial.println(expected_bytes_written, DEC);
-				Serial.print(F("Found: "));
-				Serial.println(found_bytes_written, DEC);
-				Serial.println(F("Aborting"));
+				debug_println(F("Number of written bytes different than expected."));
+				debug_print(F("Expected: "));
+				debug_println(expected_bytes_written, DEC);
+				debug_print(F("Found: "));
+				debug_println(found_bytes_written, DEC);
+				debug_println(F("Aborting"));
 
 				Flash::ls();
 
 				return RET_ERROR;
 			}
 		}
-		Serial.print(F("Finished creating dummy data. Created entries: "));
-		Serial.println(DATA_STORE_ELEMENTS_TO_WRITE, DEC);
+		debug_print(F("Finished creating dummy data. Created entries: "));
+		debug_println(DATA_STORE_ELEMENTS_TO_WRITE, DEC);
 
 		Flash::ls();
 
@@ -287,10 +292,10 @@ namespace Tests
 		// Read data back with read and cross check with dummy_data_entries. Find 
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Reading back"));
+		debug_println(F("# Reading back"));
 		Utils::serial_style(STYLE_RESET);
-		DataStoreReader<SensorData::Entry> reader(&store);
-		SensorData::Entry *read_back = NULL;
+		DataStoreReader<WaterSensorData::Entry> reader(&store);
+		WaterSensorData::Entry *read_back = NULL;
 
 		// Each entry will be searched in dummy_data_entries (by timestamp) and if found it will be marked here
 		// At the end this array must be all true
@@ -301,13 +306,13 @@ namespace Tests
 
 		while(reader.next_file())
 		{
-			while(read_back = reader.next_entry())
+			while((read_back = reader.next_entry()))
 			{
 				// Check crc
 				if(!reader.entry_crc_valid())
 				{
-					Serial.println(F("Invalid CRC. Entry: "));
-					SensorData::print(read_back);
+					debug_println(F("Invalid CRC. Entry: "));
+					WaterSensorData::print(read_back);
 					failed_crc_entries++;
 				}
 
@@ -330,10 +335,10 @@ namespace Tests
 						}
 						else
 						{
-							Serial.println(F("Found stored entry, but data different. Found: "));
-							SensorData::print(read_back);
-							Serial.println(F("Expected: "));
-							SensorData::print(&dummy_data_entries[i]);
+							debug_println(F("Found stored entry, but data different. Found: "));
+							WaterSensorData::print(read_back);
+							debug_println(F("Expected: "));
+							WaterSensorData::print(&dummy_data_entries[i]);
 
 							return RET_ERROR;
 						}
@@ -346,8 +351,8 @@ namespace Tests
 		if(failed_crc_entries > 0)
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.print(F("Entries failed CRC check: "));
-			Serial.println(failed_crc_entries, DEC);
+			debug_print(F("Entries failed CRC check: "));
+			debug_println(failed_crc_entries, DEC);
 			Utils::serial_style(STYLE_RESET);
 			return RET_ERROR;
 		}
@@ -365,8 +370,8 @@ namespace Tests
 		if(not_found_count > 0)
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.print(F("Not all stored entries found when reading back. Not found entries: "));
-			Serial.println(not_found_count, DEC);
+			debug_print(F("Not all stored entries found when reading back. Not found entries: "));
+			debug_println(not_found_count, DEC);
 			Utils::serial_style(STYLE_RESET);
 			return RET_ERROR;
 		}
@@ -375,15 +380,15 @@ namespace Tests
 		// Clean up
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Formatting for clean up."));
+		debug_println(F("# Formatting for clean up."));
 		Utils::serial_style(STYLE_RESET);
 		if(!SPIFFS.format())
 		{
-			Serial.println(F("# Format failed."));
+			debug_println(F("# Format failed."));
 			return RET_ERROR;
 		}
 
-		Serial.println(F("Done!"));
+		debug_println(F("Done!"));
 		Flash::ls();
 
 		return RET_OK;
@@ -395,20 +400,17 @@ namespace Tests
 	 ******************************************************************************/
 	RetResult wakeup_times()
 	{
-		const Sleep::WakeupScheduleEntry ref_schedule[] = 
+		const SleepScheduler::WakeupScheduleEntry ref_schedule[] = 
 		{
-			{ Sleep::WakeupReason::REASON_READ_WATER_SENSORS, 2},
-			{ Sleep::WakeupReason::REASON_READ_WATER_SENSORS, 5},
-			{ Sleep::WakeupReason::REASON_CALL_HOME, 7},
-			{ Sleep::WakeupReason::REASON_READ_WATER_SENSORS, 10},
-			{ Sleep::WakeupReason::REASON_CALL_HOME, 40},
-			{ Sleep::WakeupReason::REASON_READ_WATER_SENSORS, 42},
-			{ Sleep::WakeupReason::REASON_CALL_HOME, 84},
+			{ SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS, 2},
+			{ SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS, 5},
+			{ SleepScheduler::WakeupReason::REASON_CALL_HOME, 7},
+			{ SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS, 10},
+			{ SleepScheduler::WakeupReason::REASON_CALL_HOME, 40},
+			{ SleepScheduler::WakeupReason::REASON_READ_WATER_SENSORS, 42},
+			{ SleepScheduler::WakeupReason::REASON_CALL_HOME, 84},
 		};
 		const int ref_schedule_len = sizeof(ref_schedule) / sizeof(ref_schedule[0]);
-
-		int ref_times[WAKEUP_TIMES_SERIES_LEN] = {0};
-		int t = 0;
 
 		for(int i = 0; i < WAKEUP_TIMES_SERIES_LEN; i++)
 		{
@@ -431,28 +433,28 @@ namespace Tests
 	RetResult device_config()
 	{
 		Utils::serial_style(STYLE_RED);
-		Serial.println(F("This test will delete existing device config."));
+		debug_println(F("This test will delete existing device config."));
 		Utils::serial_style(STYLE_RESET);
 		//
 		// Erase current config entry in NVS
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Resetting"));
+		debug_println(F("# Resetting"));
 		Utils::serial_style(STYLE_RESET);
 		Preferences prefs;
 		if(!prefs.begin(DEVICE_CONFIG_NVS_NAMESPACE_NAME))
 		{
-			Serial.println(F("Could not begin NVS."));
+			debug_println(F("Could not begin NVS."));
 			return RET_ERROR;
 		}
 
 		if(!prefs.remove(DEVICE_CONFIG_NVS_NAMESPACE_NAME))
 		{
-			Serial.println(F("Could not remove existing NVS key, probably doesn't exist."));
+			debug_println(F("Could not remove existing NVS key, probably doesn't exist."));
 		}
 		else
 		{
-			Serial.println(F("Removed existing key."));
+			debug_println(F("Removed existing key."));
 		}
 		prefs.end();
 
@@ -460,7 +462,7 @@ namespace Tests
 		// Init config store
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Initializing config store"));
+		debug_println(F("# Initializing config store"));
 		Utils::serial_style(STYLE_RESET);
 		DeviceConfig::init();
 
@@ -468,7 +470,7 @@ namespace Tests
 		// Write dummy data to store
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Writing dummy data to store."));
+		debug_println(F("# Writing dummy data to store."));
 		Utils::serial_style(STYLE_RESET);
 
 		// Create dummy vals
@@ -494,7 +496,7 @@ namespace Tests
 		// Read back and verify
 		//
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("# Reading back"));
+		debug_println(F("# Reading back"));
 		Utils::serial_style(STYLE_RESET);
 
 		const DeviceConfig::Data *read_back = DeviceConfig::get();
@@ -502,7 +504,7 @@ namespace Tests
 		// Reading or CRC failed
 		if(read_back == nullptr)
 		{
-			Serial.println(F("Could not read back config."));
+			debug_println(F("Could not read back config."));
 			return RET_ERROR;
 		}
 
@@ -511,7 +513,7 @@ namespace Tests
 		// Clear to finish
 		prefs.remove(DEVICE_CONFIG_NVS_NAMESPACE_NAME);
 
-		Serial.println(F("Done!"));
+		debug_println(F("Done!"));
 
 		return RET_OK;
 	}
@@ -547,7 +549,7 @@ namespace Tests
 		char block_title[] = "Running XXX tests";
 		snprintf(block_title, sizeof(block_title), "Running %d tests", count);
 		Utils::print_block(F(block_title));
-		Serial.println();
+		debug_println();
 
 		const int test_count = sizeof(test_funcs) / sizeof(test_funcs[0]);
 
@@ -562,10 +564,10 @@ namespace Tests
 		{
 			TestId test_id = tests[i];
 
-			Serial.println();
+			debug_println();
 			snprintf(name, sizeof(name), "%s (%d/%d)", test_names[test_id], i+1, count);
 			Utils::print_separator(F(name));
-			Serial.println();
+			debug_println();
 
 			if(test_funcs[test_id]() == RET_OK)
 			{
@@ -578,9 +580,9 @@ namespace Tests
 		}
 
 		// Print results
-		Serial.println();
+		debug_println();
 		Utils::print_separator(F("Results"));
-		Serial.println();
+		debug_println();
 
 		bool overall_success = true;
 		for(int i = 0; i < test_count; i++)
@@ -589,39 +591,39 @@ namespace Tests
 			{
 			case SUCCESS:
 				Utils::serial_style(STYLE_GREEN);
-				Serial.print(F("[SUCCESS] "));
+				debug_print(F("[SUCCESS] "));
 				Utils::serial_style(STYLE_RESET);
 				break;
 			case FAILURE:
 				Utils::serial_style(STYLE_RED);
-				Serial.print(F("[FAILURE] "));
+				debug_print(F("[FAILURE] "));
 				Utils::serial_style(STYLE_RESET);
 
 				overall_success = false;
 				break;
 			case IGNORED:
 				Utils::serial_style(STYLE_YELLOW);
-				Serial.print(F("[IGNORED] "));
+				debug_print(F("[IGNORED] "));
 				Utils::serial_style(STYLE_RESET);
 				break;		
 			default:
-				Serial.println(F("Invalid test result value."));
+				debug_println(F("Invalid test result value."));
 			}
 
 			// Print name
-			Serial.println(test_names[i]);
+			debug_println(test_names[i]);
 		}
 
 		if(overall_success)
 		{
 			Utils::serial_style(STYLE_GREEN);
-			Serial.println(F("All tests passed!"));
+			debug_println(F("All tests passed!"));
 			Utils::serial_style(STYLE_RESET);
 		}
 		else
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.println(F("Tests failed."));
+			debug_println(F("Tests failed."));
 			Utils::serial_style(STYLE_RESET);
 		}
 	}

@@ -10,6 +10,8 @@
 #include "remote_control.h"
 #include "http_request.h"
 #include "device_config.h"
+#include "flash.h"
+#include "common.h"
 
 namespace OTA
 {
@@ -20,27 +22,27 @@ namespace OTA
 	RetResult handle_rc_data(JsonObject rc_json)
 	{
 		// Do OTA?
-		if(!rc_json.containsKey(TB_KEY_DO_OTA))
+		if(!rc_json.containsKey(RC_TB_KEY_DO_OTA))
 		{
 			return RET_ERROR;
 		}
 		else
 		{
-			bool do_ota = bool(rc_json[TB_KEY_DO_OTA]);
+			bool do_ota = bool(rc_json[RC_TB_KEY_DO_OTA]);
 			if(!do_ota)
 				return RET_ERROR;
 		}
 
 		Utils::serial_style(STYLE_BLUE);
-		Serial.println(F("OTA requested."));
+		debug_println(F("OTA requested."));
 		Utils::serial_style(STYLE_RESET);
 
 		Log::log(Log::OTA_REQUESTED);
 
 		// Version must be different than current
-		if(!rc_json.containsKey(TB_KEY_FW_VERSION))
+		if(!rc_json.containsKey(RC_TB_KEY_FW_VERSION))
 		{
-			Serial.println(F("No FW version specified in response."));
+			debug_println(F("No FW version specified in response."));
 
 			Log::log(Log::OTA_NO_FW_VERSION_SPECIFIED, FW_VERSION);
 
@@ -48,13 +50,13 @@ namespace OTA
 		}
 		else
 		{
-			int fw_version = (int)rc_json[TB_KEY_FW_VERSION];
+			int fw_version = (int)rc_json[RC_TB_KEY_FW_VERSION];
 
 			if(fw_version == FW_VERSION)
 			{
-				Serial.println(F("OTA fw version is same as current."));
-				Serial.print(F("Current version: "));
-				Serial.println(FW_VERSION, DEC);
+				debug_println(F("OTA fw version is same as current."));
+				debug_print(F("Current version: "));
+				debug_println(FW_VERSION, DEC);
 
 				Log::log(Log::OTA_FW_SAME_VERSION, FW_VERSION);
 
@@ -64,13 +66,13 @@ namespace OTA
 
 		// Get URL to download OTA from
 		char fw_url[URL_BUFFER_SIZE] = "";
-		if(rc_json.containsKey(TB_KEY_FW_URL) && strlen(rc_json[TB_KEY_FW_URL]) > 0)
+		if(rc_json.containsKey(RC_TB_KEY_FW_URL) && strlen(rc_json[RC_TB_KEY_FW_URL]) > 0)
 		{
-			strncpy(fw_url, rc_json[TB_KEY_FW_URL], sizeof(fw_url));
+			strncpy(fw_url, rc_json[RC_TB_KEY_FW_URL], sizeof(fw_url));
 		}
 		else
 		{
-			Serial.println(F("OTA fw url not provided or empty."));
+			debug_println(F("OTA fw url not provided or empty."));
 
 			Log::log(Log::OTA_FW_URL_NOT_SET);
 			return RET_ERROR;
@@ -78,13 +80,13 @@ namespace OTA
 
 		// Get MD5 to validate against
 		char fw_md5[33] = "";
-		if(rc_json.containsKey(TB_KEY_FW_MD5) && strlen(rc_json[TB_KEY_FW_MD5]) > 0)
+		if(rc_json.containsKey(RC_TB_KEY_FW_MD5) && strlen(rc_json[RC_TB_KEY_FW_MD5]) > 0)
 		{
-			strncpy(fw_md5, rc_json[TB_KEY_FW_MD5], sizeof(fw_md5));
+			strncpy(fw_md5, rc_json[RC_TB_KEY_FW_MD5], sizeof(fw_md5));
 		}
 		else
 		{
-			Serial.println(F("OTA fw md5 not provided or empty."));
+			debug_println(F("OTA fw md5 not provided or empty."));
 
 			Log::log(Log::OTA_MD5_NOT_SET);
 			return RET_ERROR;
@@ -93,7 +95,7 @@ namespace OTA
 		//
 		// Do request
 		//
-		Serial.println(F("Getting OTA file."));
+		debug_println(F("Getting OTA file."));
 
 		// Break URL into parts
 		int port = 0;
@@ -101,7 +103,7 @@ namespace OTA
 		char fw_url_path[URL_BUFFER_SIZE] = "";
 		if(Utils::url_explode(fw_url, &port, fw_url_host, sizeof(fw_url_host), fw_url_path, sizeof(fw_url_path)) == RET_ERROR)
 		{
-			Serial.println(F("Invalid FW URL."));
+			debug_println(F("Invalid FW URL."));
 
 			Log::log(Log::OTA_URL_INVALID);
 			return RET_ERROR;
@@ -113,12 +115,12 @@ namespace OTA
 			port = 80;
 		}
 
-		Serial.print(F("Host: "));
-		Serial.println(fw_url_host);
-		Serial.print(F("Port: "));
-		Serial.println(port, DEC);
-		Serial.print(F("Path: "));
-		Serial.println(fw_url_path);
+		debug_print(F("Host: "));
+		debug_println(fw_url_host);
+		debug_print(F("Port: "));
+		debug_println(port, DEC);
+		debug_print(F("Path: "));
+		debug_println(fw_url_path);
 
 		TestUtils::print_stack_size();
 		
@@ -128,7 +130,7 @@ namespace OTA
 		int req_ret = http_client.get(fw_url_path);
 		if(req_ret != 0)
 		{
-			Serial.println(F("Could not GET fw."));
+			debug_println(F("Could not GET fw."));
 
 			Log::log(Log::OTA_FILE_GET_REQ_FAILED, http_client.responseStatusCode());
 			return RET_ERROR;
@@ -136,14 +138,14 @@ namespace OTA
 
 		int response_code = http_client.responseStatusCode();
 		int content_length = http_client.contentLength();
-		Serial.print(F("Response code: "));
-		Serial.println(response_code, DEC);
-		Serial.print(F("Update size: "));
-		Serial.println(http_client.contentLength(), DEC);
+		debug_print(F("Response code: "));
+		debug_println(response_code, DEC);
+		debug_print(F("Update size: "));
+		debug_println(http_client.contentLength(), DEC);
 		
 		if(response_code != 200)
 		{
-			Serial.println(F("Request did not return OK."));
+			debug_println(F("Request did not return OK."));
 
 			Log::log(Log::OTA_FILE_GET_REQ_BAD_RESPONSE, response_code);
 			return RET_ERROR;
@@ -151,7 +153,7 @@ namespace OTA
 
 		if(http_client.contentLength() < 1)
 		{
-			Serial.println(F("Response empty. Aborting."));
+			debug_println(F("Response empty. Aborting."));
 
 			Log::log(Log::OTA_FILE_GET_REQ_RESP_EMPTY, response_code);
 			return RET_ERROR;
@@ -160,9 +162,12 @@ namespace OTA
 		//
 		// Read response and write to update memory
 		//
+		// Abort need to be run to reset internal Update counters. Otherwise if update fails,
+		// it won't run again until reboot
+		Update.abort();
 		if(Update.begin(content_length) == false)
 		{
-			Serial.println(F("Could not begin update. Aborting."));
+			debug_println(F("Could not begin update. Aborting."));
 
 			Log::log(Log::OTA_UPDATE_BEGIN_FAILED, Update.getError());
 			return RET_ERROR;
@@ -171,10 +176,7 @@ namespace OTA
 		// Set received MD5 for validation
 		Update.setMD5(fw_md5);
 
-		// Stream read timeout
-		http_client.setTimeout(HTTP_CLIENT_STREAM_READ_TIMEOUT);
-
-		Serial.println(F("Downloading and writing flash..."));
+		debug_println(F("Downloading and writing flash...\n"));
 
 		Log::log(Log::OTA_DOWNLOADING_AND_WRITING_FW, content_length);
 
@@ -198,12 +200,11 @@ namespace OTA
 
 			// Move cursor to start of line and print progress
 
-			Serial.print("\e[0A");
-			Serial.printf("Progress: %5d%% - Remaining: %5dKB\n", (content_length - bytes_remaining) / (content_length / 100), bytes_remaining / 1024);
-			
+			debug_print("\e[0A");
+			debug_printf("Progress: %5d%% - Remaining: %5dKB\n", (content_length - bytes_remaining) / (content_length / 100), bytes_remaining / 1024);			
 		}while(bytes_remaining > 0 && bytes_read != 0);
 
-		Serial.println(F("Done writing new fw."));
+		debug_println(F("Done writing new fw."));
 
 		Utils::serial_style(STYLE_RESET);
 
@@ -212,7 +213,7 @@ namespace OTA
 		// Do checks
 		if(!Update.isFinished())
 		{
-			Serial.println(F("Update not finished. Error: "));
+			debug_println(F("Update not finished. Error: "));
 			Update.printError(Serial);
 
 			Log::log(Log::OTA_UPDATE_NOT_FINISHED, Update.getError());
@@ -222,7 +223,7 @@ namespace OTA
 		{
 			if(!Update.end())
 			{
-				Serial.println(F("Could not end update. Error:"));		
+				debug_println(F("Could not end update. Error:"));		
 				Update.printError(Serial);
 
 				Log::log(Log::OTA_COULD_NOT_FINALIZE_UPDATE, Update.getError());
@@ -230,7 +231,7 @@ namespace OTA
 			}
 			else
 			{
-				Serial.println(F("Update applied. Device will be restarted when ready."));
+				debug_println(F("Update applied. Device will be restarted when ready."));
 
 				Log::log(Log::OTA_FINISHED);
 				
@@ -268,18 +269,23 @@ namespace OTA
 
 		if(http_req.get(url, g_resp_buffer, GLOBAL_HTTP_RESPONSE_BUFFER_LEN) != RET_OK)
 		{
-			Serial.println(F("Request to TB attribute API failed."));
+			debug_println(F("Request to TB attribute API failed."));
 			return RET_ERROR;
 		}
 		else if(http_req.get_response_code() != 200)
 		{
-			Serial.print(F("Request to TB attribute API returned code: : "));
-			Serial.println(http_req.get_response_code(), DEC);
+			debug_print(F("Request to TB attribute API returned code: : "));
+			debug_println(http_req.get_response_code(), DEC);
 
 			return RET_ERROR;
 		}
 
-		Serial.println(F("OTA self test passed."));
+		debug_println(F("Running boot self test"));
+		if(Utils::boot_self_test() != RET_OK)
+			return RET_ERROR;
+
+		debug_println(F("OTA self test passed."));
+		return RET_OK;
 	}
 
 	/******************************************************************************
@@ -293,36 +299,45 @@ namespace OTA
 
 		Utils::print_block(F("New FW - First boot"));
 
-		Serial.println(F("Running self test"));
+		debug_println(F("Running self test"));
 
 		// Run self test
 		if(self_test() == RET_OK)
 		{
 			Utils::serial_style(STYLE_GREEN);
-			Serial.println(F("Self test passed. OTA was successful."));
+			debug_println(F("Self test passed. OTA was successful."));
 			Utils::serial_style(STYLE_RESET);
+
+			// In case format was requested as well, format again to make sure it is formatted with
+			// the latest version
+			if(DeviceConfig::get_ota_flashed())
+			{
+				Flash::format();
+			}
 
 			Log::log(Log::OTA_SELF_TEST_PASSED);
 		}
 		else
 		{
 			Utils::serial_style(STYLE_RED);
-			Serial.println(F("Self test failed."));
+			debug_println(F("Self test failed."));
 			Utils::serial_style(STYLE_RESET);
 
 			Log::log(Log::OTA_SELF_TEST_FAILED);
 
 			if(Update.canRollBack())
 			{
-				Serial.println(F("FW will be rolled back to older version and device will restart."));
+				debug_println(F("FW will be rolled back to older version and device will restart."));
 				Log::log(Log::OTA_ROLLING_BACK);
 				delay(2000);
+
+				Update.rollBack();
 
 				Utils::restart_device();
 			}
 			else
 			{
-				Serial.println(F("FW cannot be rolled back to the old version."));
+				debug_println(F("FW cannot be rolled back to the old version."));
 
 				Log::log(Log::OTA_ROLLBACK_NOT_POSSIBLE);
 

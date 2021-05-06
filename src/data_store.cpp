@@ -1,7 +1,13 @@
 #include "data_store.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
+#include "soil_moisture_data.h"
+#include "atmos41_data.h"
+#include "fo_data.h"
+#include "sdi12_log.h"
 #include "log.h"
 #include "utils.h"
+#include "flash.h"
+#include "common.h"
 
 /******************************************************************************
  * DataStore
@@ -38,7 +44,7 @@ RetResult DataStore<TStruct>::add(TStruct *data)
         // Commit to flash
         commit();
 
-        Serial.println(F("Data store full, commiting and erasing."));
+        debug_println(F("Data store full, commiting and erasing."));
     }
 
 	// Prepare metadata of new entry (crc32)
@@ -65,7 +71,7 @@ RetResult DataStore<TStruct>::add(TStruct *data)
 template <class TStruct>
 RetResult DataStore<TStruct>::commit()
 {
-	if (!SPIFFS.begin())
+	if (Flash::mount() != RET_OK)
 		return RET_ERROR;
 
 	// If current data file not set yet, get one
@@ -73,20 +79,18 @@ RetResult DataStore<TStruct>::commit()
 	{
 		if(update_current_data_file_path() != RET_OK)
 		{
-			Serial.println(F("Could not get data file to write to."));
+			debug_println(F("Could not get data file to write to."));
 			return RET_ERROR;
 		}
 	}
 	
-	// Serial.print(F("File: "));
-	// Serial.println(_current_data_file_path);
+	// debug_print(F("File: "));
+	// debug_println(_current_data_file_path);
 
 	File f;
 
 	// Counter of entries left to write to flash
 	int entries_left = get_buffer_element_count();
-	// Fail safe counter to avoid infinite loop
-	int tries = 2;
 
 	// Until all entries have been written (starting from end of buffer)
 	while(entries_left)
@@ -96,7 +100,7 @@ RetResult DataStore<TStruct>::commit()
 
 		if(!f)
 		{
-			Serial.println(F("Could not open data file for append."));
+			debug_println(F("Could not open data file for append."));
 			return RET_ERROR;
 		}
 
@@ -107,7 +111,6 @@ RetResult DataStore<TStruct>::commit()
 		{
 			if(entries_left < entries_for_current_file)
 				entries_for_current_file = entries_left;
-			int bytes_to_write = entries_for_current_file * sizeof(Entry);
 
 			// If writing fails this will be false
 			bool write_success = true;
@@ -123,8 +126,8 @@ RetResult DataStore<TStruct>::commit()
 				// Reading out of bounds check (redundant)
 				if(buff_entry == NULL)
 				{
-					Serial.print(F("Element index doesn't exist in buffer: "));
-					Serial.println(entries_left - i - 1, DEC);
+					debug_print(F("Element index doesn't exist in buffer: "));
+					debug_println(entries_left - i - 1, DEC);
 
 					write_success = false;
 					break;
@@ -134,11 +137,11 @@ RetResult DataStore<TStruct>::commit()
 				int written_bytes = f.write((uint8_t*)buff_entry, sizeof(Entry));
 				if(written_bytes != sizeof(Entry))
 				{
-					Serial.println(F("Could not write entry."));
-					Serial.print(F("Entry size: "));
-					Serial.println(sizeof(Entry), DEC);
-					Serial.print(F("Written: "));
-					Serial.println(written_bytes, DEC);
+					debug_println(F("Could not write entry."));
+					debug_print(F("Entry size: "));
+					debug_println(sizeof(Entry), DEC);
+					debug_print(F("Written: "));
+					debug_println(written_bytes, DEC);
 
 					write_success = false;
 					break;
@@ -154,8 +157,8 @@ RetResult DataStore<TStruct>::commit()
 			// Writing failed, abort
 			if(!write_success)
 			{
-				Serial.print(F("Writing failed, aborting. Entries left in buffer: "));
-				Serial.println(entries_left);
+				debug_print(F("Writing failed, aborting. Entries left in buffer: "));
+				debug_println(entries_left);
 				f.close();
 				return RET_ERROR;
 			}
@@ -168,7 +171,7 @@ RetResult DataStore<TStruct>::commit()
 			// File has reached max size, get new file
 			if(update_current_data_file_path() != RET_OK)
 			{
-				Serial.printf("Could not get data file to write to.");
+				debug_printf("Could not get data file to write to.");
 				
 				f.close(); 
 				return RET_ERROR;
@@ -255,8 +258,8 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 	File dir = SPIFFS.open(_dir_path);
 	if(!dir)
 	{
-		Serial.print(F("Could not open store dir: "));
-		Serial.println(_dir_path);
+		debug_print(F("Could not open store dir: "));
+		debug_println(_dir_path);
 		return RET_ERROR;
 	}
 
@@ -276,15 +279,15 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 	cur_file.close();
 	dir.close();
 
-	// Serial.print(F("Smallest size: ")); // del
-	// Serial.println(smallest_size, DEC);
+	// debug_print(F("Smallest size: ")); // del
+	// debug_println(smallest_size, DEC);
 
 	// Smallest file found, check if there is space in it for at least one entry
 	// else create a new file
 	if(smallest_size >= 0 && smallest_size + sizeof(Entry) <= _max_entries_per_file * sizeof(Entry))
 	{
-		Serial.print(F("Use existing: "));
-		Serial.println(smallest_file_path);
+		// debug_print(F("Use existing: "));
+		// debug_println(smallest_file_path);
 
 		// Update current file path
 		strncpy(_current_data_file_path, smallest_file_path, sizeof(_current_data_file_path));
@@ -292,7 +295,7 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 	}
 	else
 	{
-		Serial.println(F("No file found or all files at max limit, creating new."));
+		// debug_println(F("No file found or all files at max limit, creating new."));
 
 		// Smallest file not found (no files exist) or all files full, decide a new filename
 		// and create
@@ -318,19 +321,19 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 
 		if (!success) 
 		{
-			Serial.println(F("Could not decide new file name."));
+			debug_println(F("Could not decide new file name."));
 			return RET_ERROR;
 		}
 
 		// Create file
-		Serial.print(F("Creating new file: "));
-		Serial.println(new_file_path);
+		debug_print(F("Creating new file: "));
+		debug_println(new_file_path);
 
 		File f = SPIFFS.open(new_file_path, FILE_WRITE);
 		if(!f)
 		{
-			Serial.print(F("Could not create new data file: "));
-			Serial.println(new_file_path);
+			debug_print(F("Could not create new data file: "));
+			debug_println(new_file_path);
 			return RET_ERROR;
 		}
 
@@ -344,5 +347,9 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 }
 
 // Forward declarations
-template class DataStore<SensorData::Entry>;
+template class DataStore<WaterSensorData::Entry>;
+template class DataStore<Atmos41Data::Entry>;
+template class DataStore<SoilMoistureData::Entry>;
 template class DataStore<Log::Entry>;
+template class DataStore<SDI12Log::Entry>;
+template class DataStore<FoData::StoreEntry>;

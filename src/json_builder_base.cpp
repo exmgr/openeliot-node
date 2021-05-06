@@ -1,6 +1,12 @@
 #include "json_builder_base.h"
 #include "log.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
+#include "soil_moisture_data.h"
+#include "sdi12_log.h"
+#include "atmos41_data.h"
+#include "fo_data.h"
+#include "common.h"
+#include "common.h"
 
 /******************************************************************************
  * Default constructor
@@ -17,16 +23,14 @@ JsonBuilderBase<TStruct, TDocSize>::JsonBuilderBase()
  *****************************************************************************/
 template <typename TStruct, int TDocSize>
 RetResult JsonBuilderBase<TStruct, TDocSize>::build(char *buff_out, int buff_size, bool beautify)
-{
-    int ret = 0;
-    	// serializeJsonPretty(_json_doc, buff_out, buff_size);
+{ 	
 	if(beautify)
 	{
-		ret = serializeJsonPretty(_json_doc, buff_out, buff_size);
+		serializeJsonPretty(_json_doc, buff_out, buff_size);
 	}
 	else
 	{
-		ret = serializeJson(_json_doc, buff_out, buff_size);
+		serializeJson(_json_doc, buff_out, buff_size);
 	}
 
 	return RET_OK;
@@ -40,6 +44,8 @@ RetResult JsonBuilderBase<TStruct, TDocSize>::reset()
 {
 	_json_doc.clear();
 	_root_array = _json_doc.template to<JsonArray>();
+
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -55,9 +61,9 @@ void JsonBuilderBase<TStruct, TDocSize>::print()
 
     build(buff, sizeof(buff), true);
 
-    Serial.println(buff);
-    Serial.print(F("Length: "));
-    Serial.println(strlen(buff), DEC);
+    debug_println(buff);
+    debug_print(F("Length: "));
+    debug_println(strlen(buff), DEC);
 }
 
 template <typename TStruct, int TDocSize>
@@ -69,4 +75,8 @@ bool JsonBuilderBase<TStruct, TDocSize>::is_empty()
 
 // Forward declarations
 template class JsonBuilderBase<Log::Entry, LOG_JSON_DOC_SIZE>;
-template class JsonBuilderBase<SensorData::Entry, SENSOR_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<WaterSensorData::Entry, WATER_SENSOR_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<Atmos41Data::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<SoilMoistureData::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<FoData::StoreEntry, FO_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<SDI12Log::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;

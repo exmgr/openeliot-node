@@ -8,9 +8,7 @@ namespace WaterSensors
     RetResult on();
     RetResult off();
 
-    void log();
-
-    bool is_measure_int_value_valid(int interval);
+    RetResult log();
 
     RetResult init();
 }

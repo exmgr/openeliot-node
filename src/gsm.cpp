@@ -9,6 +9,9 @@
 #include "utils.h"
 #include "log.h"
 #include <Wire.h>
+#include "common.h"
+#include "wifi_modem.h"
+#include "device_config.h"
 
 #define LOGGING 1
 #include <ArduinoHttpClient.h>
@@ -22,6 +25,9 @@ namespace GSM
 //
 /** Hardware serial port to be used by the GSM lib */
 // HardwareSerial _gsm_serial(GSM_SERIAL_PORT);
+
+/** Tick of power off */
+uint32_t _power_toggle_ms = 0;
 
 /** TinyGSM instance */
 #if PRINT_GSM_AT_COMMS
@@ -37,19 +43,32 @@ TinyGsm _modem(_gsm_serial);
 // Private functions
 //
 void power_cycle();
+void pwr_key_toggle();
+void pwr_reset();
 bool is_fona_serial_open();
+int pwr_toggle_in_progress();
+void init_uart();
 
 /******************************************************************************
  * Init GSM functions 
  ******************************************************************************/
 void init()
 {
+	#if WIFI_DATA_SUBMISSION
+		WifiModem::init();
+		return;
+	#endif
+
 	pinMode(PIN_GSM_PWR_KEY, OUTPUT);
 	pinMode(PIN_GSM_RESET, OUTPUT);
-	pinMode(PIN_GSM_POWER_ON, OUTPUT);
+	// pinMode(PIN_GSM_POWER_ON, OUTPUT);
 
-	// Make sure modem is off
-	off();
+	// If GSM is ON on init, turn it off
+	if(is_on(500))
+	{
+		debug_println_w(F("GSM is ON on init, turning OFF."));
+		off();
+	}
 }
 
 /*****************************************************************************
@@ -57,50 +76,60 @@ void init()
 *****************************************************************************/
 RetResult on()
 {
-	Serial.print(F("GSM ON"));
-	Serial.println();
-	int time_delay = 500;
+	#if WIFI_DATA_SUBMISSION
+		// No on in WiFiMode, always succeed
+		return RET_OK;
+	#endif
+
+	debug_println(F("GSM ON"));
+
+	Log::log(Log::GSM_ON);
+
+	// If power OFF in progress, wait until enough time passed before proceeding
+	uint32_t pwr_toggle_left_ms = pwr_toggle_in_progress();
+	if(pwr_toggle_left_ms > 0)
+	{
+		debug_println_i(F("Power toggle in progress from previous request, waiting until it's finished."));
+		delay(pwr_toggle_left_ms);
+	}
+
+	if(is_on(500))
+	{
+		debug_println_i(F("GSM already on"));
+		return RET_OK;
+	}
+
+	// Reset before toggling power pin. In case it was already ON (which means power ON was not detected properly),
+	// this will prevent module from powering OFF.
+	pwr_reset();
+	pwr_key_toggle();
+	debug_println(F("Turning ON"));
+	
+	delay(GSM_WAIT_AFTER_PWR_ON_MS);
 
 	#ifdef TCALL_H
 		// Turn IP5306 power boost OFF to reduce idle current
 		Utils::ip5306_set_power_boost_state(true);
 	#endif
-	
-	digitalWrite(PIN_GSM_RESET, HIGH);
-	delay(time_delay);
 
-	// Make sure modem is OFF
-	// Serial.println("PIN_GSM_PWR_KEY: HIGH");
-	digitalWrite(PIN_GSM_PWR_KEY, HIGH);
-
-	// Enable SY8089 4V4 for SIM800 
-	// Serial.println("PIN_GSM_POWER_ON: HIGH");
-	digitalWrite(PIN_GSM_POWER_ON, HIGH);
-	delay(time_delay);
-	delay(time_delay);
-
-	digitalWrite(PIN_GSM_PWR_KEY, LOW); // Turn modem ON
-	delay(time_delay);
-
-	_gsm_serial.end(); // Could be related to meditation guru error
-	delay(10);
-
-	_gsm_serial.begin(GSM_SERIAL_BAUD, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
-	delay(3000);
+	// If end not called before calling begin again, it results in a guru meditation error sometimes
+	// (needs confirmation)
+	init_uart();
+	delay(8000);
 
 	//_modem.restart();
-	Serial.println("Modem init...");
+	debug_println("Modem init...");
 
 	if (!_modem.init())
 	{
 		Log::log(Log::GSM_INIT_FAILED);
-		Serial.println(F("Could not init."));
+		debug_println(F("Could not init."));
 		return RET_ERROR;
 	}
 
 	String modem_info = _modem.getModemInfo();
-	Serial.print(F("GSM module: "));
-	Serial.println(modem_info.c_str());
+	debug_print(F("GSM module: "));
+	debug_println(modem_info.c_str());
 
 	return RET_OK;
 }
@@ -110,9 +139,33 @@ RetResult on()
 *****************************************************************************/
 RetResult off()
 {
-	digitalWrite(PIN_GSM_PWR_KEY, HIGH); // Turn off modem in case its ON from previous state
-	digitalWrite(PIN_GSM_POWER_ON, LOW); // turn off modem power in case its from previous state
-	digitalWrite(PIN_GSM_RESET, HIGH);   // Keep IRQ high anyway (or not to save power?)
+	#if WIFI_DATA_SUBMISSION
+		WifiModem::disconnect();
+		return RET_OK;
+	#endif
+
+	debug_println(F("GSM OFF"));
+
+	Log::log(Log::GSM_OFF);
+	
+	// If power toggle in progress, wait until enough time passed before re-toggling
+	uint32_t pwr_toggle_left_ms = pwr_toggle_in_progress();
+	if(pwr_toggle_left_ms > 0)
+	{
+		debug_println_i(F("Power toggle in progress from previous request, waiting until it's finished."));
+		delay(pwr_toggle_left_ms);
+	}
+
+	if(!is_on())
+	{
+		debug_println_i(F("GSM Already OFF."));
+		return RET_OK;
+	}
+
+	Serial.println(F("Turning OFF"));
+	pwr_key_toggle();
+
+	_power_toggle_ms = millis();
 
 	#ifdef TCALL_H
 		// Turn IP5306 power boost OFF to reduce idle current
@@ -122,27 +175,69 @@ RetResult off()
 	return RET_OK;
 }
 
+
+/******************************************************************************
+ * Toggle power key to turn ON/OFF
+ *****************************************************************************/
+void pwr_key_toggle()
+{
+	_power_toggle_ms = millis();
+
+	// TSIM
+	digitalWrite(PIN_GSM_PWR_KEY, 0);
+	delay(100);
+	digitalWrite(PIN_GSM_PWR_KEY, 1);
+	delay(1500);
+	digitalWrite(PIN_GSM_PWR_KEY, 0);
+}
+
 /******************************************************************************
  * Connect to the network and enable GPRS
  *****************************************************************************/
 RetResult connect()
 {
-	Serial.println(F("Initializing GSM"));
+	// Override GSM
+	#if WIFI_DATA_SUBMISSION
+		debug_println(F("Connecting WiFi"));
+		return WifiModem::connect();
+	#endif
 
-	Serial.println(F("Waiting for network connection..."));
+	debug_println(F("Initializing GSM"));
+
+	// Configure NBIOT
+	#ifdef TINY_GSM_MODEM_SIM7000
+		if(FLAGS.NBIOT_MODE)
+		{
+			debug_println(F("NBIoT mode"));
+			_modem.setPreferredMode(38);
+			_modem.setPreferredLTEMode(2);
+			_modem.setOperatingBand(20); 		
+		}
+		else
+		{
+			debug_println(F("GSM mode"));
+			_modem.setPreferredMode(13); //2 Auto // 13 GSM only // 38 LTE only
+
+		}
+	#endif
+
+	debug_println(F("Waiting for network connection..."));
 	if (!_modem.waitForNetwork(GSM_DISCOVERY_TIMEOUT_MS))
 	{
-		Serial.println(F("Network discovery failed."));
+		debug_println_e(F("Network discovery failed."));
 		Log::log(Log::GSM_NETWORK_DISCOVERY_FAILED);
 		return RET_ERROR;
 	}
 
-	Serial.println(F("GSM connected"));
+	debug_println_i(F("GSM connected"));
 
 	int8_t rssi = get_rssi();
 	Utils::serial_style(STYLE_BLUE);
-	Serial.print(F("RSSI: "));
-	Serial.println(rssi, DEC);
+	debug_print(F("RSSI: "));
+	debug_println(rssi, DEC);
+
+	debug_print(F("Operator: "));
+	debug_println(_modem.getOperator());
 	Utils::serial_style(STYLE_RESET);
 
 	if (enable_gprs(true) != RET_OK)
@@ -150,6 +245,8 @@ RetResult connect()
 		Log::log(Log::GSM_GPRS_CONNECTION_FAILED);
 		return RET_ERROR;
 	}
+
+	GSM::print_system_info();
 
 	return RET_OK;
 }
@@ -168,12 +265,22 @@ RetResult connect_persist()
 	{
 		if (connect() == RET_ERROR)
 		{
-			Serial.print(F("Connection failed. "));
+			debug_print(F("Connection failed. "));
 
 			if (tries)
 			{
-				Serial.println(F("Cycling power and retrying."));
+				debug_println(F("Cycling power and retrying."));
 			}
+
+			// Before last try, reset module to defaults because
+			// sometimes if the device started in NBIoT mode, when it is reverted back to GSM mode it has
+			// trouble connecting to network. So far the only thing that remedies this is an ATZ command
+			// (reset to defaults)
+			if(tries == 1)
+			{
+				GSM::factory_reset();
+			}
+
 			power_cycle();
 		}
 		else
@@ -185,7 +292,7 @@ RetResult connect_persist()
 
 	if (!success)
 	{
-		Serial.println(F("Could not connect. Aborting."));
+		debug_println(F("Could not connect. Aborting."));
 
 		return RET_ERROR;
 	}
@@ -198,6 +305,11 @@ RetResult connect_persist()
 *****************************************************************************/
 void power_cycle()
 {
+	// Override GSM
+	#if WIFI_DATA_SUBMISSION
+		return;
+	#endif
+
 	off();
 	delay(500);
 	on();
@@ -208,18 +320,32 @@ void power_cycle()
 *****************************************************************************/
 RetResult update_ntp_time()
 {
-	Serial.print(F("Updating time from: "));
-	Serial.println(NTP_SERVER);
+	#if WIFI_DATA_SUBMISSION
+		configTime(0, 0, NTP_SERVER);
 
-	// Toggle GPRS to make sure it returns NTP time and not GSM time
-	// enable_gprs(false);
-	// if (enable_gprs(true) != RET_OK)
-	// 	return RET_ERROR;
+		// If time is now valid, success
+		if(RTC::tstamp_valid(RTC::get_timestamp()))
+		{
+			return RET_OK;
+		}
+		else
+		{
+			return RET_ERROR;
+		}
+	#endif
 
-	if (_modem.NTPServerSync(F(NTP_SERVER), 0) == -1)
-	{
+	#ifdef TINY_GSM_MODEM_SIM7000
+		debug_println(F("SIM7000 doesn't support NTP sync, aborting."));
 		return RET_ERROR;
-	}
+	#else
+		debug_print(F("Updating time from: "));
+		debug_println(NTP_SERVER);
+
+		if (_modem.NTPServerSync(F(NTP_SERVER), 0) == -1)
+		{
+			return RET_ERROR;
+		}
+	#endif
 
 	return RET_OK;
 }
@@ -229,17 +355,22 @@ RetResult update_ntp_time()
 *****************************************************************************/
 RetResult get_time(tm *out)
 {
+	#if WIFI_DATA_SUBMISSION
+		debug_println(F("GSM override is enabled, get_time is disabled."));
+		return RET_ERROR;
+	#endif
+	
 	char buff[26] = "";
 
 	// Returned format: "30/08/87,05:49:54+00"
 	String date_time = _modem.getGSMDateTime(DATE_FULL);
 
-	Serial.print(F("Got time: "));
-	Serial.println(date_time.c_str());
+	debug_print(F("Got time: "));
+	debug_println(date_time.c_str());
 
 	if (date_time.length() < 1)
 	{
-		Serial.println(F("Could not get time from GSM."));
+		debug_println(F("Could not get time from GSM."));
 		return RET_ERROR;
 	}
 
@@ -247,21 +378,22 @@ RetResult get_time(tm *out)
 					&(out->tm_year), &(out->tm_mon), &(out->tm_mday),
 					&(out->tm_hour), &(out->tm_min), &(out->tm_sec)))
 	{
-		Serial.print(F("Could not parse FONA time: "));
-		Serial.println(buff);
+		debug_print(F("Could not parse FONA time: "));
+		debug_println(buff);
 
 		// 0 vars parsed
 		return RET_ERROR;
 	}
 
 	// Year in GSM module counts from 2000, must count from 1900
+	// NOTE: Not in SIM7000
 	out->tm_year += 100;
 	// Month in GSM module counts from 01, must count from 00
 	out->tm_mon--;
 
 	time_t gsm_epoch = mktime(out);
-	Serial.print(F("Parsed time in GSM module: "));
-	Serial.println(ctime(&gsm_epoch));
+	debug_print(F("Parsed time in GSM module: "));
+	debug_println(ctime(&gsm_epoch));
 
 	return RET_OK;
 }
@@ -271,29 +403,36 @@ RetResult get_time(tm *out)
  *****************************************************************************/
 RetResult enable_gprs(bool enable)
 {
+	#if WIFI_DATA_SUBMISSION
+		// On wifi mode, always succeeds
+		return RET_OK;
+	#endif
+
 	if (enable)
 	{
+		const char *apn = DeviceConfig::get_cellular_apn();
 		// Get APN from device descriptor
-		const DeviceDescriptor *device_descriptor = Utils::get_device_descriptor();
-		Serial.print(F("Connecting to APN: "));
-		Serial.println(device_descriptor->apn);
+		debug_print(F("Connecting to APN: "));
+		debug_println(apn);
 
-		if (!_modem.gprsConnect(device_descriptor->apn, "", ""))
+		if (!_modem.gprsConnect(apn, "", ""))
 		{
-			Serial.println(F("Could not connect GPRS."));
+			debug_println(F("Could not connect data."));
 			return RET_ERROR;
 		}
+
+		debug_println(F("Data connected."));
 	}
 	else
 	{
 		if (!_modem.gprsDisconnect())
 		{
-			Serial.println(F("Could not disable GPRS."));
+			debug_println(F("Could not disable data connection."));
 			return RET_ERROR;
 		}
-	}
 
-	Serial.println(F("GPRS connected."));
+		debug_println(F("Data disconnected."));
+	}
 
 	return RET_OK;
 }
@@ -304,7 +443,10 @@ RetResult enable_gprs(bool enable)
 ******************************************************************************/
 int get_rssi()
 {
-	// TODO: Check if serial is open else get exception
+	#if WIFI_DATA_SUBMISSION
+		debug_println(F("GSM override is enabled, RSSI will be 0."));
+		return 0;
+	#endif
 
 	uint16_t rssi_sim = _modem.getSignalQuality();
 	int16_t rssi = 0;
@@ -322,15 +464,40 @@ int get_rssi()
 }
 
 /******************************************************************************
+* Get network system mode
+******************************************************************************/
+RetResult print_system_info()
+{
+	_modem.sendAT(F("+CPSI?"));
+
+	if (_modem.waitResponse("+CPSI:") != 1)
+	{
+		return RET_ERROR;
+    }
+
+	String res = _modem.stream.readStringUntil('\n');
+
+	debug_println_i(F("UE system information"));
+	debug_println(res);
+
+	return RET_OK;
+}
+
+/******************************************************************************
  * Get battery info from module
  * @param 
  *****************************************************************************/
 RetResult get_battery_info(uint16_t *voltage, uint16_t *pct)
 {
+	#if WIFI_DATA_SUBMISSION
+		debug_println(F("GSM override is enabled, getting battery info from GSM is disabled."));
+		return RET_ERROR;
+	#endif
+
 	if (!(*voltage = _modem.getBattVoltage()))
 	{
 		*voltage = 0;
-		Serial.println(F("Could not read voltage from GSM module"));
+		debug_println(F("Could not read voltage from GSM module"));
 		return RET_ERROR;
 	}
 	
@@ -338,7 +505,7 @@ RetResult get_battery_info(uint16_t *voltage, uint16_t *pct)
 	if (!(*pct = _modem.getBattPercent()))
 	{
 		*pct = 0;
-		Serial.println(F("Could not read battery pct from GSM module."));
+		debug_println(F("Could not read battery pct from GSM module."));
 		return RET_ERROR;
 	}
 	
@@ -346,11 +513,110 @@ RetResult get_battery_info(uint16_t *voltage, uint16_t *pct)
 }
 
 /******************************************************************************
+* Factory reset modem
+******************************************************************************/
+RetResult factory_reset()
+{
+	debug_println_i(F("Restoring defaults on GSM modem."));
+
+	_modem.streamWrite("ATZ", "\r\n");
+    _modem.stream.flush();
+
+    if(_modem.waitResponse() != 1)
+	{
+		return RET_ERROR;
+    }
+	else
+		return RET_OK;
+}
+
+/******************************************************************************
  * Check if SIM card present by checking if its ready
  *****************************************************************************/
-bool sim_card_present()
+bool is_sim_card_present()
 {
+	#if WIFI_DATA_SUBMISSION
+		// No SIM card in GSM mode, always succeed
+		return RET_OK;
+	#endif
+
 	return _modem.getSimStatus() == SIM_READY;
+}
+
+/******************************************************************************
+* Test AT interface to checkheck if GSM module power is on
+* Will return false if device is still booting
+* @return True when power is ON
+******************************************************************************/
+bool is_on(uint32_t timeout)
+{
+	#if WIFI_DATA_SUBMISSION
+		// Always on in Wifi mode
+		return RET_OK;
+	#endif
+
+	init_uart();
+
+	// modem.init() must have been already run for this to work??
+	return _modem.testAT(timeout);
+}
+
+/******************************************************************************
+* Check if GPRS connection is on
+* @return True when GPRS is connected
+******************************************************************************/
+bool is_gprs_connected()
+{
+	#if WIFI_DATA_SUBMISSION
+		return WifiModem::is_connected();
+	#endif
+
+	return _modem.isGprsConnected();
+}
+
+/******************************************************************************
+* Check whether a power ON/OFF is in progress (ie. power ON/OFF was requested
+* and the predefined time has not passed yet).
+* If interval between power ON/OFF is too small, toggling power might not have
+* any effect (ie. requesting power OFF while the device is still booting after
+* a power ON)
+* @return mS left until PWR toggle is finished
+******************************************************************************/
+int pwr_toggle_in_progress()
+{
+	uint32_t time_since_pwr_toggle = millis() - _power_toggle_ms;
+	if(_power_toggle_ms > 0 && time_since_pwr_toggle <= GSM_WAIT_AFTER_PWR_TOGGLE_MS)
+	{
+		return GSM_WAIT_AFTER_PWR_TOGGLE_MS - time_since_pwr_toggle;
+	}
+	else
+		return 0;
+}
+
+/******************************************************************************
+ * Toggle reset pin
+ *****************************************************************************/
+void pwr_reset()
+{
+
+	debug_println_i(F("Resetting"));
+	digitalWrite(PIN_GSM_RESET, 0);
+	delay(500);
+	digitalWrite(PIN_GSM_RESET, 1);
+}
+
+/******************************************************************************
+ * Init UART port for GSM module
+ *****************************************************************************/
+void init_uart()
+{
+	// Without end() = guru meditation error. (only when .begin already ran?)
+	// Without long enough delay = same error
+	_gsm_serial.end(); 
+	delay(200);
+
+	_gsm_serial.begin(GSM_SERIAL_BAUD, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
+	delay(50);
 }
 
 /******************************************************************************

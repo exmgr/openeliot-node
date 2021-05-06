@@ -1,8 +1,14 @@
 #include "data_store_reader.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
+#include "soil_moisture_data.h"
+#include "fo_data.h"
+#include "sdi12_log.h"
+#include "atmos41_data.h"
 #include "log.h"
 #include "utils.h"
-#include "sensor_data.h"
+#include "water_sensor_data.h"
+#include "flash.h"
+#include "common.h"
 
 /******************************************************************************
 * Constructor
@@ -36,16 +42,18 @@ DataStoreReader<TStruct>::~DataStoreReader()
 * Create handles. Must be called before calling anything else.
 ******************************************************************************/
 template <class TStruct>
-bool DataStoreReader<TStruct>::begin()
+RetResult DataStoreReader<TStruct>::begin()
 {
 	// todo: what happens if begin is not called? next should return false
-	if(!SPIFFS.begin())
+	if(Flash::mount() != RET_OK)
 	{
-		Serial.println(F("Could not start SPIFFS."));
+		debug_println(F("Could not start SPIFFS."));
 		return RET_ERROR;
 	}
 
 	reset();
+
+	return RET_OK;
 }
 
 /******************************************************************************
@@ -85,7 +93,7 @@ bool DataStoreReader<TStruct>::next_file()
 		// No more files, finish
 		if(!_cur_file)
 		{
-			Serial.println(F("No more files to open. Finish."));
+			debug_println(F("No more files to open. Finish."));
 			_state_files = STATE_READING_FINISHED;
 		}
 		else
@@ -222,5 +230,9 @@ RetResult DataStoreReader<TStruct>::reset_data_state()
 		
 
 // Define uses
-template class DataStoreReader<SensorData::Entry>;
+template class DataStoreReader<WaterSensorData::Entry>;
+template class DataStoreReader<Atmos41Data::Entry>;
+template class DataStoreReader<SoilMoistureData::Entry>;
 template class DataStoreReader<Log::Entry>;
+template class DataStoreReader<FoData::StoreEntry>;
+template class DataStoreReader<SDI12Log::Entry>;

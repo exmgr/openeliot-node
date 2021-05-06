@@ -9,6 +9,8 @@ namespace Flash
 
     RetResult read_file(const char *path, uint8_t *dest, int bytes);
 
+    RetResult format();
+
     void ls();
 }
 

@@ -3,6 +3,8 @@
 #include "utils.h"
 #include "const.h"
 #include "struct.h"
+#include "log.h"
+#include "common.h"
 
 namespace Flash
 {
@@ -16,34 +18,34 @@ namespace Flash
 
 		while(tries--)
 		{
-			if(SPIFFS.begin())
+			if(SPIFFS.begin(false, "/spiffs", 25))
 			{
 				success = true;
 				break;
 			}
 			else
 			{
-				Serial.println(F("Could not mount SPIFFS."));
+				debug_println(F("Could not mount SPIFFS."));
 				if(tries > 1)
-					Serial.println(F("Retrying..."));					
+					debug_println(F("Retrying..."));					
 			}
 		}
 
 		// If mounting failed, format partition then try mounting again
 		if(!success)
 		{
-			Serial.println(F("Could not mount SPIFFS, formatting partition..."));
+			debug_println(F("Could not mount SPIFFS, formatting partition..."));
 			SPIFFS.format();
 
-			if(SPIFFS.begin())
+			if(SPIFFS.begin(false, "/spiffs", 50))
 			{
-				Serial.println(F("Partition mount successful."));
+				debug_println(F("Partition mount successful."));
 				return RET_OK;
 			}
 			else
 			{
 				Utils::serial_style(STYLE_RED);
-				Serial.println(F("Mounting failed."));
+				debug_println(F("Mounting failed."));
 				Utils::serial_style(STYLE_RESET);	
 				return RET_ERROR;
 			}
@@ -57,9 +59,9 @@ namespace Flash
 	*******************************************************************************/
 	RetResult read_file(const char *path, uint8_t *dest, int bytes)
 	{
-		if(!SPIFFS.begin())
+		if(Flash::mount() != RET_OK)
 		{
-			Serial.print(F("Could not mount flash."));
+			debug_print(F("Could not mount flash."));
 			return RET_ERROR;
 		}
 
@@ -68,14 +70,14 @@ namespace Flash
 		// File doesn't exist
 		if(!f)
 		{
-			Serial.println(F("Could not load file."));
+			debug_println(F("Could not load file."));
 			return RET_ERROR;
 		}
 
 		// Try to read file
 		if(bytes != f.read(dest, bytes))
 		{
-			Serial.println(F("Could not read file."));
+			debug_println(F("Could not read file."));
 			return RET_ERROR;
 		}
 
@@ -89,16 +91,15 @@ namespace Flash
 	{
 		Utils::print_separator(F("Flash memory contents"));
 
-		// if(!SPIFFS.begin())
-		// {
-		//     Serial.println(F("Could not begin SPIFFS."));
-		//     return;
-		// }
+		if(Flash::mount() != RET_OK)
+		{
+		    return;
+		}
 
 		File root = SPIFFS.open("/");
 		if(!root)
 		{
-			Serial.println(F("Could not open root."));
+			debug_println(F("Could not open root."));
 			return;
 		}
 
@@ -106,15 +107,32 @@ namespace Flash
 		
 		while(cur_file = root.openNextFile())
 		{
-			Serial.print(cur_file.name());
+			debug_print(cur_file.name());
 
 			// Print size
-			Serial.print(F(" ["));
-			Serial.print(cur_file.size());
-			Serial.print(F("]"));
-			Serial.println();
+			debug_print(F(" ["));
+			debug_print(cur_file.size());
+			debug_print(F("]"));
+			debug_println();
 		}
 
 		Utils::print_separator(F("End flash memory contents"));
+	}
+
+	/******************************************************************************
+	 * Format SPIFFS and log
+	 *****************************************************************************/
+	RetResult format()
+	{
+		if(SPIFFS.format())
+		{
+			Log::log(Log::SPIFFS_FORMATTED);
+			return RET_OK;
+		}
+		else
+		{
+			Log::log(Log::SPIFFS_FORMAT_FAILED);
+			return RET_ERROR;
+		}
 	}
 }
