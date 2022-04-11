@@ -93,10 +93,14 @@ namespace SleepScheduler
 		int next_event_seconds_left = 0;
 		RetResult ret = calc_next_wakeup(t_now_sec, schedule, &next_event_seconds_left, &_last_wakeup_reasons);
 
+		// Temp for debug
+		// Log::log(Log::CALCULATING_SLEEP, t_now_sec, RTC::get_external_rtc_timestamp()); 
+
 		if(ret != RET_OK)
 		{
 			Utils::serial_style(STYLE_RED);
 			debug_println(F("Could not calculate wake up time!"));
+			Log::log(Log::SLEEP_COULD_NOT_CALC_WAKEUP_TIME, t_now_sec, next_event_seconds_left);
 			Utils::serial_style(STYLE_RESET);
 		}	
 
@@ -118,7 +122,10 @@ namespace SleepScheduler
 		SleepScheduler::print_wakeup_reasons(_last_wakeup_reasons);
 
 		Utils::serial_style(STYLE_YELLOW);
+		Utils::print_separator(NULL);
 		debug_printf("Sleeping for %d seconds (%.1f min)\n", next_event_seconds_left, (float)next_event_seconds_left / 60);
+		Utils::print_separator(NULL);
+		RTC::print_time();
 		Utils::serial_style(STYLE_RESET);
 
 		// If going to sleep from FO wake up only (no other reasons), do not log
@@ -134,9 +141,10 @@ namespace SleepScheduler
 		//
 		// Sleep
 		//
-		_t_last_sleep = RTC::get_external_rtc_timestamp();	
+		_t_last_sleep = RTC::get_timestamp();	
 
 		Serial.flush();
+		
 		esp_sleep_enable_timer_wakeup((uint64_t)next_event_seconds_left * 1000000);
 		esp_light_sleep_start();
 
@@ -150,35 +158,42 @@ namespace SleepScheduler
 		// How much time we slept?
 		// How much time were we supposed to sleep?
 		// supposed - slept = more sleep time
-		int t_wakeup = RTC::get_external_rtc_timestamp();
-
-		if(RTC::tstamp_valid(_t_last_sleep) && RTC::tstamp_valid(t_wakeup))
+		// Calculated using timestamp from external RTC
+		if(FLAGS.EXTERNAL_RTC_ENABLED)
 		{
-			int underslept_secs = next_event_seconds_left - (t_wakeup - _t_last_sleep);
-			if(underslept_secs > 0 && underslept_secs <= MAX_SLEEP_CORRECTION_SEC)
+			int t_wakeup = RTC::get_external_rtc_timestamp();
+
+			if(RTC::tstamp_valid(_t_last_sleep) && RTC::tstamp_valid(t_wakeup))
 			{
-				debug_print(F("Slept at: "));
-				debug_println(_t_last_sleep, DEC);
-				debug_print(F("Woke up at: "));
-				debug_println(t_wakeup, DEC);
+				int underslept_secs = next_event_seconds_left - (t_wakeup - _t_last_sleep);
+				if(underslept_secs > 0 && underslept_secs <= MAX_SLEEP_CORRECTION_SEC)
+				{
+					debug_print(F("Slept at: "));
+					debug_println(_t_last_sleep, DEC);
+					debug_print(F("Woke up at: "));
+					debug_println(t_wakeup, DEC);
 
-				debug_print(F("Correcting sleep. Sleeping for (sec): "));
-				debug_println(underslept_secs, DEC);
+					debug_print(F("Correcting sleep. Sleeping for (sec): "));
+					debug_println(underslept_secs, DEC);
 
-				Log::log(Log::WAKEUP_CORRECTION, underslept_secs);
+					Log::log(Log::WAKEUP_CORRECTION, underslept_secs, RTC::get_external_rtc_timestamp());
 
-				esp_sleep_enable_timer_wakeup((uint64_t)underslept_secs * 1000000);
-				esp_light_sleep_start();
+					Serial.flush();
+					esp_sleep_enable_timer_wakeup((uint64_t)underslept_secs * 1000000);
+					esp_light_sleep_start();
+					Serial.println(F("Woke up from correction."));
+					Serial.flush();
+				}
+				else
+				{
+					debug_print(F("Cannot correct sleep, invalid value (sec): "));
+					debug_println(underslept_secs, DEC);
+				}
 			}
 			else
 			{
-				debug_print(F("Cannot correct sleep, invalid value (sec): "));
-				debug_println(underslept_secs, DEC);
+				debug_println(F("Cannot correct sleep time, ext RTC time invalid."));
 			}
-		}
-		else
-		{
-			debug_println(F("Cannot correct sleep time, ext RTC time invalid."));
 		}
 
 		// Keep track of wake up time
@@ -199,7 +214,8 @@ namespace SleepScheduler
 			Log::log(Log::WAKEUP, _last_wakeup_reasons);
 
 		Utils::serial_style(STYLE_YELLOW);
-		debug_println(F("Waking up!"));
+		Utils::print_block(F("Waking up!"));
+		RTC::print_time();
 		Utils::serial_style(STYLE_RESET);
 
 		return RET_OK;
@@ -423,6 +439,8 @@ namespace SleepScheduler
 				break;
 		}
 
+		// Temp for debugging, will be removed to reduce log spam
+		// Log::log(Log::DECIDED_SLEEP_SCHEDULE, schedule_id);
 		if(!schedule_valid(schedule_out))
 		{
 			Utils::serial_style(STYLE_RED);

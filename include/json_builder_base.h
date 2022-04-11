@@ -24,6 +24,8 @@ public:
     RetResult reset();
 
     void print();
+
+    StaticJsonDocument<TDocSize>* get_json_doc();
 protected:
     StaticJsonDocument<TDocSize> _json_doc;
     JsonArray _root_array;

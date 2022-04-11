@@ -13,6 +13,7 @@ namespace CallHome
     RetResult handle_client_attributes();
     RetResult handle_logs();
     RetResult handle_telemetry();
+    RetResult submit_ipfs();
 }
 
 #endif

@@ -118,7 +118,8 @@ namespace FoUart
 			{
 				buff[len] = '\0';
 
-				debug_println(buff);
+				// Print received line
+				// debug_println(buff);
 
 				// Skip until first field is found
 				char param_name[25] = "";

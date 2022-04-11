@@ -4,6 +4,7 @@
 #include "soil_moisture_data.h"
 #include "sdi12_log.h"
 #include "atmos41_data.h"
+#include "lightning_data.h"
 #include "fo_data.h"
 #include "common.h"
 #include "common.h"
@@ -72,6 +73,15 @@ bool JsonBuilderBase<TStruct, TDocSize>::is_empty()
 	return _json_doc.size() < 1;
 }
 
+/******************************************************************************
+ * JsonDoc accessor
+ *****************************************************************************/
+template <typename TStruct, int TDocSize>
+StaticJsonDocument<TDocSize>* JsonBuilderBase<TStruct, TDocSize>::get_json_doc()
+{
+	return &_json_doc;
+}
+
 
 // Forward declarations
 template class JsonBuilderBase<Log::Entry, LOG_JSON_DOC_SIZE>;
@@ -80,3 +90,4 @@ template class JsonBuilderBase<Atmos41Data::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;
 template class JsonBuilderBase<SoilMoistureData::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;
 template class JsonBuilderBase<FoData::StoreEntry, FO_DATA_JSON_DOC_SIZE>;
 template class JsonBuilderBase<SDI12Log::Entry, ATMOS41_DATA_JSON_DOC_SIZE>;
+template class JsonBuilderBase<LightningData::Entry, LIGHTNING_DATA_JSON_DOC_SIZE>;

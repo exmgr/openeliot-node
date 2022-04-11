@@ -40,6 +40,8 @@ public:
     const Entry* get_buffer_element(unsigned int index) const;
 
 	const char* get_dir_path() const;
+
+    RetResult cleanup(bool force);
 protected:
 	// Default constructor private
 	DataStore();
@@ -51,6 +53,9 @@ private:
     //
 
     RetResult update_current_data_file_path();
+
+    File open_file();
+
     //
     // Vars
     //

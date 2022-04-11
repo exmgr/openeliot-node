@@ -21,7 +21,7 @@ const int SECONDS_IN_2000 = 946684800;
 const int URL_BUFFER_SIZE = 128;
 
 /** Buffer size for URL's host part (used when exploding URLs) */
-const int URL_HOST_BUFFER_SIZE = 40;
+const int URL_HOST_BUFFER_SIZE = 60;
 
 /** Larger buffer size for storing larger URL with many params (eg. thingsboard shared attrs) */
 const int URL_BUFFER_SIZE_LARGE = 256;
@@ -49,7 +49,7 @@ const unsigned long FAIL_CHECK_TIMESTAMP_END = 2072091600;
 const int ADC_CYCLES = 128;
 
 /** Samples to average when reading battery voltage with internal ADC */
-const int ADC_BATTERY_LEVEL_SAMPLES = 50;
+const int ADC_BATTERY_LEVEL_SAMPLES = 20;
 
 /** Time user has to hold button to enter config mode */
 const int CONFIG_MODE_BTN_HOLD_TIME_MS = 2000;
@@ -82,6 +82,14 @@ const int FILE_PATH_BUFFER_SIZE = 25;
 /** Max tries when looking for an unused filename before failing */
 const int FILENAME_POSTFIX_MAX = 100;
 
+/** Max number of files to delete when cleaning up store. Store is full when max
+ * num of files is reached. */
+const int STORE_CLEANUP_FILE_COUNT = 500;
+
+/** Max number of files allowed in a directory. When num is exceeded, cleanup
+ * is triggered */
+const int STORE_MAX_FILE_COUNT = 1000;
+
 /******************************************************************************
  * Telemetry data
  *****************************************************************************/
@@ -110,6 +118,7 @@ const char WATER_SENSOR_DATA_KEY_DEPTH_CM[] = "s_depth_cm";
 const char WATER_SENSOR_DATA_KEY_DEPTH_FT[] = "s_depth_ft";
 const char WATER_SENSOR_DATA_KEY_TSS[] = "s_tss";
 const char WATER_SENSOR_DATA_KEY_WATER_LEVEL[] = "s_wl";
+const char WATER_SENSOR_DATA_KEY_WATER_PRESENCE[] = "s_presence";
 
 /******************************************************************************
  * Soil moisture data
@@ -129,7 +138,7 @@ const char SOIL_MOISTURE_DATA_KEY_TEMPERATURE[] = "sm_temp";
 const char SOIL_MOISTURE_DATA_KEY_CONDUCTIVITY[] = "sm_cond";
 
 /******************************************************************************
- * Weather data
+ * Atmos41 data
  *****************************************************************************/
 /** Path in data store where sensor data is stored */
 const char* const ATMOS41_DATA_PATH = "/wes";
@@ -152,6 +161,53 @@ const char ATMOS41_DATA_KEY_VAPOR_PRESSURE[] = "ws_vapor_press";
 const char ATMOS41_DATA_KEY_ATM_PRESSURE[] = "ws_atm_press";
 const char ATMOS41_DATA_KEY_REL_HUMIDITY[] = "ws_rel_hum";
 const char ATMOS41_DATA_KEY_DEW_POINT[] = "ws_dew_pt";
+
+/******************************************************************************
+ * Lightning sensor
+ *****************************************************************************/
+/** Path in data store where sensor data is stored */
+const char* const LIGHTNING_DATA_PATH = "/ls";
+
+/** Arduino JSON doc size */
+const int LIGHTNING_DATA_JSON_DOC_SIZE = 1024;
+/** Sensor data entries to group into a single json packet for submission */
+const int LIGHTNING_DATA_ENTRIES_PER_SUBMIT_REQ = 8;
+
+// Telemetry key names
+const char LIGHTNING_DATA_KEY_TIMESTAMP[] = "ts";
+const char LIGHTNING_DATA_KEY_DISTANCE[] = "li_dist";
+const char LIGHTNING_DATA_KEY_ENERGY[] = "li_energy";
+
+/** Ignore disturber events */
+const bool LIGHTNING_MASK_DISTURBERS = true;
+
+/** Noise floor level 1 - 7 */
+const uint8_t LIGHTNING_NOISE_FLOOR = 2;
+
+/** AFE watchdog threshold */
+const uint8_t LIGHTNING_WATCHDOG_THRES = 2;
+
+/** Spike rejection 1 - 11 */
+const uint8_t LIGHTNING_SPIKE_REJECTION = 2;
+
+/** Number of lightning strikes before IRQ fires
+ * Values [1, 5, 9, 16] */
+const uint8_t LIGHTNING_THRES = 1;
+
+/** Time after an IRQ that another IRQ is allowed to fire. IRQs sooner than this
+ * will be ignored */
+const uint32_t LIGHTNING_IRQ_DEBOUNCE_MS = 1000;
+
+/** Time after which noise/disturber counter will be logged */
+const uint32_t LIGHTNING_REPORT_LOG_INTERVAL_SEC = 60 * 60;
+
+// Module specific constants
+
+/*
+ * Lightning sensor module types
+ */
+#define LIGHTNING_SENSOR_CJMCU 1
+#define LIGHTNING_SENSOR_DFROBOT 2
 
 /******************************************************************************
  * Log
@@ -190,7 +246,8 @@ const char RC_TB_KEY_DO_REBOOT[] = "do_reboot";
 const char RC_TB_KEY_DO_OTA[] = "do_ota";
 const char RC_TB_KEY_FO_ENABLED[] = "fo_en";
 const char RC_TB_KEY_DO_FO_SCAN[] = "do_fo_scan";
-const char RC_TB_KEY_FORMAT_SPIFFS[] = "do_format";
+const char RC_TB_KEY_DO_FORMAT_SPIFFS[] = "do_format";
+const char RC_TB_KEY_DO_RTC_SYNC[] = "do_rtc";
 const char RC_TB_KEY_FW_URL[] = "fw_url";
 const char RC_TB_KEY_FW_VERSION[] = "fw_v";
 const char RC_TB_KEY_FW_MD5[] = "fw_md5";
@@ -233,8 +290,11 @@ const char TB_CLIENT_ATTRIBUTES_URL_FORMAT[] = "/api/v1/%s/attributes?clientKeys
  * TB API URL for getting shared attributes for remote control
  * Params: device access token
 */
-const char TB_SHARED_ATTRIBUTES_URL_FORMAT[] = "/api/v1/%s/attributes?sharedKeys=data_id,ch_int,fw_v,fw_url,fw_md5,was_int,wes_int,sm_int,ch_int,do_ota,do_reboot,do_format,do_fo_scan,fo_en";
+const char TB_SHARED_ATTRIBUTES_URL_FORMAT[] = "/api/v1/%s/attributes?sharedKeys=data_id,ch_int,fw_v,fw_url,fw_md5,was_int,wes_int,sm_int,ch_int,do_ota,do_reboot,do_format,do_rtc,do_fo_scan,fo_en";
 
+/** Max failed requests before aborting telemetry submission */
+
+const int FAILED_TELEMETRY_REQ_THRESHOLD = 3;
 /******************************************************************************
 * DeviceConfig store
 ******************************************************************************/
@@ -341,7 +401,13 @@ const int WATER_QUALITY_RETRY_WAIT_MS = 1000;
 
 // General
 /** Times to measure (and calculate avg) */
-const int WATER_LEVEL_MEASUREMENTS_COUNT = 10;
+const int WATER_LEVEL_MEASUREMENTS_COUNT = 20;
+
+/** Min number of valid sensor values required for a valid measurement.
+ * If after filtering the number of resulting values is less than this, the measurement
+ * is considered invalid. Must be less than WATER_LEVEL_MEASUREMENTS_COUNT */
+const int WATER_LEVEL_MIN_VALID_MEASUREMENTS = 10;
+
 /** Delay in mS between measurements */
 const int WATER_LEVEL_DELAY_BETWEEN_MEAS_MS = 5;
 /** Max range in centimeters */
@@ -366,6 +432,10 @@ const int WATER_LEVEL_PWM_FAILED_MEAS_LIMIT = 15;
 // Analog channel only
 /** Millivolts per cm */
 const float WATER_LEVEL_MV_PER_MM = (float)3300 / WATER_LEVEL_MAX_RANGE_MM;
+
+/** Max measurement time for uS level sensor. If measurement takes longer, it is considered
+ * failed */
+const int WATER_LEVEL_US_TIMEOUT_MS = 6000;
 
 /******************************************************************************
  * Teros12 sensor
@@ -403,6 +473,7 @@ const char FO_DATA_KEY_WIND_DIR[] = "fo_w_dir";
 const char FO_DATA_KEY_WIND_SPEED[] = "fo_w_speed";
 const char FO_DATA_KEY_WIND_GUST[] = "fo_w_gust";
 const char FO_DATA_KEY_UV[] = "fo_uv";
+const char FO_DATA_KEY_UV_INDEX[] = "fo_uv_index";
 const char FO_DATA_KEY_LIGHT[] = "fo_light";
 const char FO_DATA_KEY_SOLAR_RADIATION[] = "fo_sol_rad";
 

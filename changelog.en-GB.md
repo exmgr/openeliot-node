@@ -1,3 +1,66 @@
+[1.64]
+* Time source priority changed to HTTP first.
+
+[1.63]
+* CHanged battery sleep thersholds to 25/35%.
+
+[1.61]
+* Improved filtering of ADC battery measurement
+* Light sensor tuning
+* Detect system time drift using external RTC
+* Check RTC drift on wakeup-self-test
+* Added check to prevent significant time changes on RTC sync to prevent time errors
+
+[1.58]
+* Improved RTC auto sync
+* Log RTC time source on sync for debugging
+
+[1.56]
+* Improved data acquisition from MaxBotix level sensor
+
+[1.55]
+* Decreased RTC auto sync interval to half a day
+
+[1.54]
+* Added UV index to weather telemetry
+
+[1.53]
+* Moved DFRobot water level sensor to another serial port due to stability issues 
+
+[1.52]
+* Light sensor stability bug fixes
+* Log raw value of water presence sensor
+* DFRobot ultrasonic serial port bug fix
+
+[1.51]
+* More flags submitted as attributes to aid with debugging
+
+[1.50]
+* Added IPFS support. Weather station measurements are submitted to IPFS during data submission.
+
+[1.49]
+* RTC auto-sync feature, where RTC is automatically synced on preset intervals.
+
+[1.48]
+* Added NTP sync support to TSIM7000.
+
+[1.45]
+* Lightning sensor tuned for improved precision. 
+
+[1.44]
+* Device can now keep working if external RTC fails by relying solely on the internal RTC.
+
+[1.43]
+* More robust handling on errors during data submission.
+* Improved wind speed calculations for FineOffset weather stations.
+* Added lightning sensor mode selection switch
+* Added support for LTC2941 coulomb counter.
+* Added INA218 current monitor support for monitoring solar power.
+
+[1.42]
+* Added Lightning sensor on/off flag.
+* Added RTC sync remote control command.
+
 [1.41]
 * Added Aquatroll600 support.
 

@@ -68,11 +68,6 @@ namespace Log
         // Meta2: Alt (meters - int)
         INT_ENV_SENSOR2 = 17,        
 
-        // Battery measurements from GSM
-        // Meta1: Voltage
-        // Meta2: Percentage
-        BATTERY_GAUGE = 18,
-
         // Remote control: Invalid response received (could not deserialize)
         RC_PARSE_FAILED = 19,
 
@@ -183,6 +178,7 @@ namespace Log
         // RTC sync took place
         // Time after sync is log time
         // Meta1: System time at the start of sync
+        // Meta2: 0 = Manual Sync, 1 = Auto Sync
         RTC_SYNC = 48,
 
         //
@@ -354,7 +350,7 @@ namespace Log
         // Meta1: Found FO node id
         FO_SNIFFER_SCAN_RESULT = 84,
 
-        // FO Scan finished, no 
+        // FO Scan finished
         FO_SNIFFER_SCAN_FINISHED = 85,
 
         // FO enabled status
@@ -379,7 +375,47 @@ namespace Log
         // Meta1: Telemetry
         // Meta2: Logs
         DATA_SUBMISSION_ELAPSED = 91,
-        
+
+        // Lightning noise events
+        // Meta1: Noise events
+        // Meta2: Disturber event
+        LIGHTNING_IRQ_REPORT = 92,
+
+        // Submission during call home was aborted
+        CALL_HOME_SUBMISSION_ABORTED = 93,
+
+        //
+        // Battery gauge data
+        // Meta1: mAh battery
+        // Meta2: mAh expended
+        BAT_GAUGE_DATA = 94,
+
+        //
+        // Solar monitor data
+        // Meta1: voltage
+        // Meta2: Current
+        SOLAR_MONITOR_DATA = 95,
+
+        //
+        // Current battery mode
+        // Meta1: Battery mode
+        BATTERY_MDDE = 96,
+
+        //
+        // Data store commit to flash memory failed, possible loss of data.
+        //
+        DATA_STORE_COMMIT_FAILED = 97,
+
+        //
+        // RTC: drift detected
+        // Meta1: Drift (secs)
+        // Meta2: Current ext RTC tstamp
+        RTC_DRIFT_DETECTED = 98,
+
+        //
+        // RTC: Detected unsafe timechange attempt
+        // Meta1: Timestamp to change to
+        RTC_DETECTED_UNSAFE_TIMECHANGE = 99,
 
         //
         // GSM errors
@@ -422,6 +458,17 @@ namespace Log
         GSM_OFF = 106,
 
         //
+        // Cannot start lightning module
+        // Meta1: Module used
+        // Meta2: i2c addr
+        LIGHTNING_FAILED_TO_START = 107,
+
+        //
+        // Data store cleanup took place
+        //
+        DATA_STORE_CLEANUP = 108,
+
+        //
         // Temporary codes only for debugging
         // All 2XX codes
         CALL_HOME_WAKEUP_MISSED = 200,
@@ -462,7 +509,25 @@ namespace Log
          * Wake up count since last aggregated packet 
          * Meta1: Wake up count
          */
-        FO_WAKEUPS = 211
+        FO_WAKEUPS = 211,
+
+        /*
+         * Decided sleep schedule
+         */
+        DECIDED_SLEEP_SCHEDULE = 212,
+
+        /*
+         * Calculating sleep
+         * Meta1: Timestamp used to calc sleep
+         * Meta2: EXT RTC timestamp
+         */
+        CALCULATING_SLEEP = 213,
+
+        /*
+        * Could not calc wake up time
+        * Meta1: 
+        */
+        SLEEP_COULD_NOT_CALC_WAKEUP_TIME = 214
     };
 }
 

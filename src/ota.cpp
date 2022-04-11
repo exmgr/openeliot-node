@@ -185,12 +185,14 @@ namespace OTA
 		// 
 		int bytes_read = 0, bytes_remaining = content_length;
 
+		http_client.setTimeout(10000);
 		Utils::serial_style(STYLE_BLUE);
 		do
 		{
 			int bytes_to_read = bytes_remaining > GLOBAL_HTTP_RESPONSE_BUFFER_LEN ? GLOBAL_HTTP_RESPONSE_BUFFER_LEN : bytes_remaining;
 
 			// Read into global response buffer
+
 			bytes_read = http_client.readBytes(g_resp_buffer, bytes_to_read);
 
 			Update.write((uint8_t*)g_resp_buffer, bytes_read);

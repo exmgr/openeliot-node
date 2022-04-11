@@ -17,6 +17,7 @@ namespace GSM
 
     RetResult update_ntp_time();
     RetResult get_time(tm *out);
+    RetResult parse_time(const char *timestring, tm *out, bool gsm_time);
 
     RetResult on();
     RetResult off();

@@ -19,7 +19,8 @@ namespace FoSniffer
 	int calc_secs_to_next_sniff();
 	RetResult handle_sniff_event();
 	RetResult commit_buffer();
-void print_packet(FoDecodedPacket *packet);
+	void print_packet(FoDecodedPacket *packet);
+	FoDecodedPacket* get_last_packet();
 }
 
 #endif

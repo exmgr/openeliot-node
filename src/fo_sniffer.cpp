@@ -201,6 +201,9 @@ namespace FoSniffer
 			{
 				_packet_buff.add_packet(&_last_decoded_packet);
 				_in_sync = true;
+				
+				Log::log(Log::FO_SNIFFER_SCAN_RESULT, _last_decoded_packet.node_address);
+
 			}
 		}
 
@@ -256,22 +259,21 @@ namespace FoSniffer
 		// Wind speed
 		// If wsp flag is set
 		uint8_t extra_wind_speed_bits = 0;
-		// if(buff[3] & 0b1000000)
-		// {
-		// 	// Wind speed is 9bit
-		// 	Serial.println(F("WSP flag SET!!"));
-		// 	extra_wind_speed_bits =  (buff[1] & 0b10000) >> 4;
-		// }
-		// else
-		// {
-		// 	// Wind speed is 10bit
-		// 	Serial.println(F("WSP flag NOT SET!!"));
-		// 	extra_wind_speed_bits =  (buff[1] & 0b110000) >> 4;
-		// }
+		if(buff[3] & 0b1000000)
+		{
+			// Wind speed is 9bit
+			Serial.println(F("WSP flag SET!!"));
+			extra_wind_speed_bits =  (buff[3] & 0b10000) >> 4;
+		}
+		else
+		{
+			// Wind speed is 10bit
+			Serial.println(F("WSP flag NOT SET!!"));
+			extra_wind_speed_bits =  (buff[3] & 0b110000) >> 4;
+		}
 
-		// Test rotation
-		decoded->wind_speed = buff[6] * FO_WIND_SPEED_COEFF;
-		// decoded->wind_speed = /*(extra_wind_speed_bits << 8) |*/ buff[4] * 0.0644;
+		// decoded->wind_speed = buff[6] * FO_WIND_SPEED_COEFF;
+		decoded->wind_speed = ((extra_wind_speed_bits << 8) | buff[6]) * 0.0644;
 
 		// Gust speed
 		decoded->wind_gust = buff[7] * FO_WIND_GUST_COEFF;
@@ -440,9 +442,13 @@ namespace FoSniffer
 				// If valid packet received print and return
 				// In case of invalid packets, nothing is done. Waiting to receive more data
 				RetResult decode_ret = decode_packet(buff, &_last_decoded_packet);
+				
 				if(decode_ret != RET_ERROR)
 				{
 					Serial.println(F("Received OK"));
+
+					debug_print(F("Node: "))
+					debug_println_i(_last_decoded_packet.node_address, HEX);
 					FoBuffer::print_packet(&_last_decoded_packet);
 
 					// Update time of last received packet

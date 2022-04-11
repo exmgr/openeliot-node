@@ -1,19 +1,18 @@
 #include "battery.h"
-#include "MAX17043.h"
 #include "const.h"
 #include "log.h"
 #include "utils.h"
 #include "gsm.h"
 #include "app_config.h"
 #include "common.h"
+#include "lightning.h"
 
 namespace Battery
 {
     //
     // Private members
     //
-    /** Battery gauge instance */
-    MAX1704X _gauge(5);
+    BATTERY_MODE _last_battery_mode = BATTERY_MODE::BATTERY_MODE_NORMAL;
 
     //
     // Private functions
@@ -21,61 +20,15 @@ namespace Battery
     uint8_t mv_to_pct(uint16_t mv);
 
     /******************************************************************************
-     * Init fuel gauge
+     * Init fuel
      ******************************************************************************/
     RetResult init()
     {
         // Configure ADC
         analogSetCycles(ADC_CYCLES);
 
-        _gauge.reset();
-        // Go to sleep
-        _gauge.sleep();
-
         pinMode(PIN_ADC_BAT, ANALOG);
         pinMode(PIN_ADC_SOLAR, ANALOG);
-
-        return RET_OK;
-    }
-
-    /******************************************************************************
-     * Wake device up, read fuel gauge values and go back to sleep.
-     * @param voltage Voltage output value
-     * @param pct Percentage output value
-     ******************************************************************************/
-    RetResult read_gauge(uint16_t *voltage, uint16_t *pct)
-    {
-        delay(10);
-
-        // Try to wake up from sleep
-        int tries = 2;
-        while(tries--)
-        {
-            if(!_gauge.isSleeping())
-                break;
-
-            _gauge.wake();
-        }
-
-        // If still didn't wake up, either stuck in sleep or communication failed
-        if(_gauge.isSleeping())
-        {
-            Utils::serial_style(STYLE_RED);
-            debug_println(F("Could not communicate with fuel gauge."));
-            Utils::serial_style(STYLE_RESET);
-            return RET_ERROR;
-        }
-
-        // When waking up from sleep, if we don't wait enough time, the
-        // previous values will be returned
-        delay(600);
-
-        // TODO: Convert to Volts
-        *voltage = (int)(_gauge.voltage()*1000);
-        *pct = (int)_gauge.percent();
-
-        // Back to sleep
-        _gauge.sleep();
 
         return RET_OK;
     }
@@ -86,44 +39,41 @@ namespace Battery
      *****************************************************************************/
     RetResult read_adc(uint16_t *voltage, uint16_t *pct)
     {
-       	uint32_t in = 0;
-        for (int i = 0; i < ADC_BATTERY_LEVEL_SAMPLES; i++)
-        {
-            in += (uint32_t)analogRead(PIN_ADC_BAT);
-        }
-        in = (int)in / ADC_BATTERY_LEVEL_SAMPLES;
+        int tries = 3;
+        float avg_level = 0;
 
-        uint16_t bat_mv = ((float)in / 4096) * 3600 * 2;
+        while(tries--)
+        {
+            int battery_vals[ADC_BATTERY_LEVEL_SAMPLES];
+            for (int i = 0; i < ADC_BATTERY_LEVEL_SAMPLES; i++)
+            {
+                battery_vals[i] = (uint32_t)analogRead(PIN_ADC_BAT);
+                delay(5);
+            }
+
+            // Serial.println(F("Values read: "));
+            // print_vals(battery_vals, ADC_BATTERY_LEVEL_SAMPLES);
+
+            int outliers = Utils::filter_outliers(battery_vals, ADC_BATTERY_LEVEL_SAMPLES, &avg_level);
+            
+            // Data is ok, done
+            if(outliers < ADC_BATTERY_LEVEL_SAMPLES / 2)
+                break;
+
+            // debug_println_e(F("Too much noise, retrying"));
+            // debug_print_e(F("Vals: "));
+            // debug_println(avg_level, DEC);
+
+            // print_vals(battery_vals, ADC_BATTERY_LEVEL_SAMPLES);
+
+            debug_println("\n----------------------------------");
+        }
+
+        uint16_t bat_mv = ((float)avg_level / 4096) * 3600 * 2;
 
         *voltage = bat_mv;
         *pct = mv_to_pct(bat_mv);
                
-        return RET_OK;
-    }
-
-    /******************************************************************************
-     * Store battery gauge measurements in log
-     *****************************************************************************/
-    RetResult log_gauge()
-    {
-        if(!FLAGS.FUEL_GAUGE_ENABLED)
-		{
-			return RET_OK;
-		}	
-
-        uint16_t voltage = 0, pct = 0;
-
-        if(read_gauge(&voltage, &pct) == RET_ERROR)
-        {
-            return RET_ERROR;
-        }
-
-        Log::log(Log::BATTERY_GAUGE, voltage, pct);
-
-        Utils::serial_style(STYLE_BLUE);
-        debug_printf("Fuel Gauge Battery: %dmV | %d%% |\n", voltage, pct);
-        Utils::serial_style(STYLE_RESET);
-
         return RET_OK;
     }
 
@@ -228,17 +178,11 @@ namespace Battery
 
         if(FLAGS.BATTERY_FORCE_NORMAL_MODE)
         {
+            _last_battery_mode = BATTERY_MODE_NORMAL;
             return BATTERY_MODE::BATTERY_MODE_NORMAL;
         }
         
-        if(FLAGS.FUEL_GAUGE_ENABLED)
-        {
-            read_gauge(&mv, &pct);
-        }
-        else
-        {
-            read_adc(&mv, &pct);
-        }
+        read_adc(&mv, &pct);
 
         debug_print(F("Battery: "));
         debug_print(mv, DEC);
@@ -248,10 +192,12 @@ namespace Battery
 
         if(pct > BATTERY_LEVEL_LOW)
         {
+            _last_battery_mode = BATTERY_MODE_NORMAL;
             return BATTERY_MODE::BATTERY_MODE_NORMAL;
         }
         else if(pct > BATTERY_LEVEL_SLEEP_CHARGE)
         {
+            _last_battery_mode = BATTERY_MODE_LOW;
             return BATTERY_MODE::BATTERY_MODE_LOW;
         }
         else if(pct == 0 && mv == 0)
@@ -260,12 +206,22 @@ namespace Battery
             debug_println(F("Battery voltage is 0, state unknown, assuming normal battery mode."));
             Utils::serial_style(STYLE_RESET);
 
+            _last_battery_mode = BATTERY_MODE_NORMAL;
             return BATTERY_MODE::BATTERY_MODE_NORMAL;
         }
         else
         {
+            _last_battery_mode = BATTERY_MODE_SLEEP_CHARGE;
             return BATTERY_MODE::BATTERY_MODE_SLEEP_CHARGE;
         }
+    }
+
+    /******************************************************************************
+    * Get battery mode calculated on last get_current_mode call
+    ******************************************************************************/
+    BATTERY_MODE get_last_mode()
+    {
+        return _last_battery_mode;
     }
 
     /******************************************************************************
@@ -280,16 +236,16 @@ namespace Battery
 
         debug_println(F("Battery critical, going into sleep charge mode."));
         Log::log(Log::SLEEP_CHARGE);
-        
-        if(FLAGS.FUEL_GAUGE_ENABLED)
-        {
-            Battery::log_gauge();
-        }	
-        else
-        {
-            Battery::log_adc();
-            Battery::log_solar_adc();
-        }
+
+        //
+        // Prepare
+        //
+        // Turn lightning sensor OFF to prevent INTs waking up device
+        if(FLAGS.LIGHTNING_SENSOR_ENABLED)
+            Lightning::off();
+    
+        Battery::log_adc();
+        Battery::log_solar_adc();
 
         // Set sleep time and go to sleep
         uint64_t time_to_sleep_ms = SLEEP_CHARGE_CHECK_INT_MINS * 60000;
@@ -297,6 +253,7 @@ namespace Battery
         if(FLAGS.SLEEP_MINS_AS_SECS)
             time_to_sleep_ms /= 60;
 
+        esp_sleep_pd_config(esp_sleep_pd_domain_t::ESP_PD_DOMAIN_RTC_PERIPH, esp_sleep_pd_option_t::ESP_PD_OPTION_ON);
         esp_sleep_enable_timer_wakeup((uint64_t)time_to_sleep_ms * 1000);
 
         int wakeup_count = 0;
@@ -316,24 +273,23 @@ namespace Battery
             if(pct < BATTERY_LEVEL_SLEEP_RECHARGED)
             {
                 debug_println(F("Battery level not quite there yet... Going back to sleep."));
-                Log::log(Log::SLEEP_CHARGE_CHECK, wakeup_count);
+                Log::log(Log::SLEEP_CHARGE_CHECK, wakeup_count, mv);
             }
             else
             {
                 debug_println(F("Battery charged up to threshold. Exiting sleep charge mode."));
 
                 Log::log(Log::SLEEP_CHARGE_FINISHED, wakeup_count);
-                if(FLAGS.FUEL_GAUGE_ENABLED)
-                {		
-                    Battery::log_gauge();
-                }	
-                    else
-                {
-                    Battery::log_adc();
-                }
+                
+                Battery::log_adc();
+                
                 break;
             }
         }
+
+        // Turn lightning back ON
+        if(FLAGS.LIGHTNING_SENSOR_ENABLED)
+            Lightning::on();
     }
 
     /******************************************************************************
@@ -360,10 +316,7 @@ namespace Battery
     void print_mode()
     {
         uint16_t mv = 0, pct = 0;
-        if(FLAGS.FUEL_GAUGE_ENABLED)
-            read_gauge(&mv, &pct);
-        else
-            read_adc(&mv, &pct);
+        read_adc(&mv, &pct);
         debug_printf("Getting battery mode. %dmV | %d%% \n", mv, pct);
         debug_print(F("Battery mode: "));
 

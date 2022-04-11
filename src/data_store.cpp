@@ -1,6 +1,7 @@
 #include "data_store.h"
 #include "water_sensor_data.h"
 #include "soil_moisture_data.h"
+#include "lightning_data.h"
 #include "atmos41_data.h"
 #include "fo_data.h"
 #include "sdi12_log.h"
@@ -38,11 +39,20 @@ DataStore<TStruct>::DataStore(const char *dir_path, int max_entries_per_file)
 template <class TStruct>
 RetResult DataStore<TStruct>::add(TStruct *data)
 {
-    // Buffer full?
+    // Buffer full? Commit it to flash and clear
     if (_buffer_element_count >= DATA_STORE_BUFFER_ELEMENTS)
     {
         // Commit to flash
-        commit();
+        if(commit() != RET_OK)
+		{
+			// When commiting fails, empty buffer and log this event
+
+			Log::log(Log::DATA_STORE_COMMIT_FAILED);
+
+			cleanup(true);
+		}
+
+		clear_buffer();
 
         debug_println(F("Data store full, commiting and erasing."));
     }
@@ -55,6 +65,20 @@ RetResult DataStore<TStruct>::add(TStruct *data)
 	memcpy(&new_entry.data, data, sizeof(TStruct));
 
 	// Copy new entry to buffer
+	// debug_print_i(F("Buffer size: "));
+	// debug_println(sizeof(_buffer), DEC);
+	// debug_print_i(F("Element: "));
+	// debug_println(_buffer_element_count, DEC);
+	// debug_print_i(F("Element size: "));
+	// debug_println(sizeof(new_entry), DEC);
+
+	Serial.flush();
+
+	if(_buffer_element_count >= DATA_STORE_BUFFER_ELEMENTS)
+	{
+		return RET_ERROR;
+	}
+
     memcpy((void *)&_buffer[_buffer_element_count], &new_entry, sizeof(new_entry));
 
     _buffer_element_count++;	
@@ -85,8 +109,7 @@ RetResult DataStore<TStruct>::commit()
 	}
 	
 	// debug_print(F("File: "));
-	// debug_println(_current_data_file_path);
-
+	// debug_println(_current_data_file_path)
 	File f;
 
 	// Counter of entries left to write to flash
@@ -96,6 +119,7 @@ RetResult DataStore<TStruct>::commit()
 	while(entries_left)
 	{
 		// Try to open current data file.
+		f.close();
 		f = SPIFFS.open(_current_data_file_path, "a");
 
 		if(!f)
@@ -135,6 +159,7 @@ RetResult DataStore<TStruct>::commit()
 
 				// Write a single netry
 				int written_bytes = f.write((uint8_t*)buff_entry, sizeof(Entry));
+				f.flush();
 				if(written_bytes != sizeof(Entry))
 				{
 					debug_println(F("Could not write entry."));
@@ -162,6 +187,8 @@ RetResult DataStore<TStruct>::commit()
 				f.close();
 				return RET_ERROR;
 			}
+
+			f.close();
 		}
 
 		// If no more entries fit into this file or end reached and we still have entries to write,
@@ -211,7 +238,10 @@ RetResult DataStore<TStruct>::clear_all()
 	while(file = dir.openNextFile())
 	{
 		SPIFFS.remove(file.name());
+
+		file.close();
 	}
+	dir.close();
 
 	return RET_OK;
 }
@@ -248,9 +278,9 @@ const char* DataStore<TStruct>::get_dir_path() const
 }
 
 /******************************************************************************
- * Update path of file that next write will be done to. First try to find a 
- * file that has still space left (didn't reach max element per file limit)
- * If failed, create a new file.
+ * Update path of file where the next write operation will take
+ * First try to find a  file that has still space left (didn't reach max 
+ * element per file limit). If failed, create a new file.
  ******************************************************************************/
 template <class TStruct>
 RetResult DataStore<TStruct>::update_current_data_file_path()
@@ -275,6 +305,8 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 			smallest_size = cur_file.size();
 			strncpy(smallest_file_path, cur_file.name(), sizeof(smallest_file_path));
 		}
+
+		cur_file.close();
 	}
 	cur_file.close();
 	dir.close();
@@ -346,6 +378,116 @@ RetResult DataStore<TStruct>::update_current_data_file_path()
 	}
 }
 
+template <typename TStruct>
+File DataStore<TStruct>::open_file()
+{
+	// TODO: Not implemented
+}
+
+template <typename TStruct>
+RetResult DataStore<TStruct>::cleanup(bool force)
+{
+	if(!force)
+	{
+		File dir = SPIFFS.open(_dir_path);
+		int file_count = 0;
+		File f;
+
+		if(!dir)
+		{
+			debug_println_e(F("Could not open store dir."));
+			return RET_ERROR;
+		}
+
+		while(f = dir.openNextFile())
+		{
+			file_count++;
+		}
+		dir.close();
+
+		debug_print(F("Store "));
+		debug_print(_dir_path);
+		debug_print(F(" file count: "));
+		debug_println(file_count);
+
+		if(file_count > STORE_MAX_FILE_COUNT)
+		{
+
+			debug_print_e(F("Max number of files in directory reached, triggering cleanup: "));
+			debug_println(file_count);
+		}
+		else
+		{
+			// Do nothing
+			return RET_OK;
+		}
+	}
+
+
+	// When max number of files is reached, SPIFFS has panic attacks and among other things, sometimes
+	// fails to SPIFFS.remove(). This is a workaround.
+	SPIFFS.end();
+	SPIFFS.begin();
+
+	debug_print_i(F("Free space before cleanup: "));
+	debug_println(SPIFFS.totalBytes() - SPIFFS.usedBytes(), DEC);
+	debug_print_i(F("Cleaning up store: "));
+	debug_println(_dir_path);
+
+	File dir = SPIFFS.open(_dir_path);
+	if(!dir)
+	{
+		debug_println_e(F("Could not open store dir."));
+		return RET_ERROR;
+	}
+
+	// Delete files until threshold reached
+	File cur_file;
+	int bytes_freed = 0;
+	int files_deleted = 0;
+
+	while(cur_file = dir.openNextFile())
+	{
+		debug_print(F("Removing: "));
+		debug_println(cur_file.name());
+		debug_print(F("Used bytes before: "));
+		debug_println(SPIFFS.usedBytes(), DEC);
+
+		if(SPIFFS.remove(cur_file.name()))
+		{
+			bytes_freed += cur_file.size();
+
+			debug_println_i(F("Remove SUCCESS"));
+		}
+
+		// Temp move inside if above
+		if(++files_deleted >= STORE_CLEANUP_FILE_COUNT)
+				break;
+
+		debug_print(F("Bytes after: "));
+		debug_println(SPIFFS.usedBytes(), DEC);
+	}
+
+	debug_print_i(F("Deleted files: "));
+	debug_println(files_deleted, DEC);
+	debug_print(F("Bytes freed: "));
+	debug_println(bytes_freed, DEC);
+
+	if(files_deleted > 0)
+	{
+		// ACHTUNG!!! If not done carefully, could cause a loop
+		log(Log::DATA_STORE_CLEANUP, files_deleted, bytes_freed);
+	}
+
+	cur_file.close();
+	dir.close();
+
+	debug_print_i(F("Free space after cleanup: "));
+	debug_println(SPIFFS.totalBytes() - SPIFFS.usedBytes(), DEC);
+
+	return RET_ERROR;
+}
+
 // Forward declarations
 template class DataStore<WaterSensorData::Entry>;
 template class DataStore<Atmos41Data::Entry>;
@@ -353,3 +495,4 @@ template class DataStore<SoilMoistureData::Entry>;
 template class DataStore<Log::Entry>;
 template class DataStore<SDI12Log::Entry>;
 template class DataStore<FoData::StoreEntry>;
+template class DataStore<LightningData::Entry>;

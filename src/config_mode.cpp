@@ -188,6 +188,9 @@ bool check_button()
 		}
 	}
 
+	// Restore pin to default state to be used by other code
+	pinMode(PIN_CONFIG_MODE_BTN, OUTPUT);
+
 	// Turn LED off
 	digitalWrite(PIN_LED, 0);
 

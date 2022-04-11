@@ -7,16 +7,19 @@ namespace RTC
 {
     RetResult init();
 
-    RetResult sync();
+    RetResult sync(bool enable_safety = true);
 
     uint32_t get_timestamp();
 
     float get_external_rtc_temp();
 
+    uint32_t get_last_sync_tick();
+
     void print_time();
     void print_temp();
 
     bool tstamp_valid(uint32_t tstamp);
+    int detect_drift();
 
     // TODO: Temp public
     RetResult sync_gsm_rtc_from_ntp();
@@ -28,6 +31,7 @@ namespace RTC
     RetResult set_system_time(uint32_t timestamp);
 
     uint32_t get_external_rtc_timestamp();
+    void enable_timechange_safety(bool val);
     // TODO: up to here
 }
 

@@ -66,4 +66,10 @@
 #define PIN_RF_SCK 18
 #define PIN_RF_SS 5
 
+/* Lightning sensor IRQ pin */
+#define PIN_LIGHTNING_IRQ GPIO_NUM_33
+
+/* Water presence sensor  */
+#define PIN_WATER_PRESENCE GPIO_NUM_34
+
 #endif

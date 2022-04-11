@@ -173,6 +173,19 @@ struct FoDecodedPacket
     uint8_t checksum; 	// Checksum
 } __attribute__((packed));
 
+enum LightningEnvironment
+{
+	LIGHTNING_ENV_INDOOR = 0x01,
+	LIGHTNING_ENV_OUTDOOR = 0x0E
+};
+
+enum LightningIntReason
+{
+    LIGHTNING_INT_REASON_NOISE = 0x01,
+    LIGHTNING_INT_REASON_DISTURBER = 0x04,
+    LIGHTNING_INT_REASON_LIGHTNING = 0x08
+};
+
 /**
  * Stats of a telemetry data submit operation
  */
@@ -196,21 +209,30 @@ struct FLAGS_T
     bool WIFI_DEBUG_CONSOLE_ENABLED : 1;
     bool WIFI_DATA_SUBMISSION_ENABLED;
 
-    bool FUEL_GAUGE_ENABLED : 1;
+    bool BATTERY_GAUGE_ENABLED : 1;
+    bool SOLAR_CURRENT_MONITOR_ENABLED : 1;
+    
     bool NBIOT_MODE : 1;
     bool SLEEP_MINS_AS_SECS : 1;
     bool BATTERY_FORCE_NORMAL_MODE : 1;
 
     bool WATER_QUALITY_SENSOR_ENABLED : 1;
     bool WATER_LEVEL_SENSOR_ENABLED : 1;
-    bool WEATHER_STATION_ENABLED : 1;
+    bool WATER_PRESENCE_SENSOR_ENABLED: 1;
+    bool ATMOS41_ENABLED : 1;
     bool SOIL_MOISTURE_SENSOR_ENABLED : 1;
 
     bool MEASURE_DUMMY_WATER_QUALITY : 1;
     bool MEASURE_DUMMY_WATER_LEVEL : 1;
     bool MEASURE_DUMMY_WEATHER : 1;
 
+    bool LIGHTNING_SENSOR_ENABLED: 1;
+
+    bool RTC_AUTO_SYNC: 1;
+
     bool EXTERNAL_RTC_ENABLED : 1;
+
+    bool IPFS: 1;
 };
 
 #endif

@@ -10,6 +10,10 @@
 #include "rom/rtc.h"
 #include "credentials.h"
 #include "common.h"
+#include "data_store_reader.h"
+#include "water_sensor_data.h"
+#include "soil_moisture_data.h"
+#include "atmos41_data.h"
 
 namespace Utils
 {
@@ -237,8 +241,11 @@ namespace Utils
 				debug_println(F("Host output buffer too small."));
 				return RET_ERROR;
 			}
-				
-			strncpy(host_out, cursor, host_len);
+			
+			if(host_out != nullptr)
+			{
+				strncpy(host_out, cursor, host_len);
+			}
 			
 			// Set cursor
 			cursor = host_end;
@@ -253,7 +260,11 @@ namespace Utils
 				char port_str[6] = "";
 				
 				strncpy(port_str, port_start, 5);
-				sscanf(port_start+1, "%5d", port_out);
+
+				if(port_out != nullptr)
+				{
+					sscanf(port_start+1, "%5d", port_out);
+				}
 				
 			}
 			else
@@ -277,8 +288,11 @@ namespace Utils
 			debug_println(F("Path output buffer too small."));
 			return RET_ERROR;
 		}
-		
-		strncpy(path_out, cursor, path_max_size);
+
+		if(path_out != nullptr)
+		{
+			strncpy(path_out, cursor, path_max_size);
+		}
 		
 		return RET_OK;
 	}
@@ -415,67 +429,61 @@ namespace Utils
 		debug_print(F("- Debug mode: "));
 		if(FLAGS.DEBUG_MODE)
 		{
-			serial_style(STYLE_RED);
+			serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			serial_style(STYLE_RESET);
 		}
 		else
 		{
-			serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- WiFi Debug console: "));
 		if(FLAGS.WIFI_DEBUG_CONSOLE_ENABLED)
 		{
-			serial_style(STYLE_RED);
+			serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			serial_style(STYLE_RESET);
 		}
 		else
 		{
-			serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- NBIoT mode: "));
 		if(FLAGS.NBIOT_MODE)
 		{
+			serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
+			serial_style(STYLE_RESET);
 		}
 		else
 		{
-			debug_println(F("Disabled"));
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Sleep minutes treated as seconds: "));
 		if(FLAGS.SLEEP_MINS_AS_SECS)
 		{
-			serial_style(STYLE_RED);
+			serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			serial_style(STYLE_RESET);
 		}
 		else
 		{
-			serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Water quality sensor: "));
 		if(FLAGS.WATER_QUALITY_SENSOR_ENABLED)
 		{
-			Utils::serial_style(STYLE_GREEN);
+			serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
-			Utils::serial_style(STYLE_RESET);
+			serial_style(STYLE_RESET);
 		}
 		else
 		{
-			Utils::serial_style(STYLE_RED);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Water level sensor: "));
@@ -487,13 +495,11 @@ namespace Utils
 		}
 		else
 		{
-			Utils::serial_style(STYLE_RED);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Atmos41 weather station: "));
-		if(FLAGS.WEATHER_STATION_ENABLED)
+		if(FLAGS.ATMOS41_ENABLED)
 		{
 			Utils::serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
@@ -501,51 +507,43 @@ namespace Utils
 		}
 		else
 		{
-			Utils::serial_style(STYLE_RED);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Water Quality measurements return dummy values: "));
 		if(FLAGS.MEASURE_DUMMY_WATER_QUALITY)
 		{
-			Utils::serial_style(STYLE_RED);
+			Utils::serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			Utils::serial_style(STYLE_RESET);
 		}
 		else
 		{
-			Utils::serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Water Level measurements return dummy values: "));
 		if(FLAGS.MEASURE_DUMMY_WATER_LEVEL)
 		{
-			Utils::serial_style(STYLE_RED);
+			Utils::serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			Utils::serial_style(STYLE_RESET);
 		}
 		else
 		{
-			Utils::serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Weather measurements return dummy values: "));
 		if(FLAGS.MEASURE_DUMMY_WEATHER)
 		{
-			Utils::serial_style(STYLE_RED);
+			Utils::serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			Utils::serial_style(STYLE_RESET);
 		}
 		else
 		{
-			Utils::serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- External RTC: "));
@@ -557,9 +555,7 @@ namespace Utils
 		}
 		else
 		{
-			Utils::serial_style(STYLE_RED);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- Force normal battery mode: "));
@@ -571,24 +567,33 @@ namespace Utils
 		}
 		else
 		{
-			Utils::serial_style(STYLE_RED);
-			debug_println(F("Disabled"));
-			Utils::serial_style(STYLE_RESET);
+			debug_println_e(F("Disabled"))
 		}
 
 		debug_print(F("- GSM AT command output to console: "));		
 		if(PRINT_GSM_AT_COMMS)
 		{
-			Utils::serial_style(STYLE_RED);
+			Utils::serial_style(STYLE_GREEN);
 			debug_println(F("Enabled"));
 			Utils::serial_style(STYLE_RESET);
 		}
 		else
 		{
+			debug_println_e(F("Disabled"))
+		}
+
+		debug_print(F("- Lightning sensor: : "));		
+		if(FLAGS.LIGHTNING_SENSOR_ENABLED)
+		{
 			Utils::serial_style(STYLE_GREEN);
-			debug_println(F("Disabled"));
+			debug_println(F("Enabled"));
 			Utils::serial_style(STYLE_RESET);
 		}
+		else
+		{
+			debug_println_e(F("Disabled"))
+		}
+
 
 		Utils::print_separator(NULL);
 	}
@@ -717,5 +722,108 @@ namespace Utils
 	float rad_to_deg(float rad)
 	{
 		return rad * (180 / M_PI);
+	}
+
+
+	/******************************************************************************
+	 * Build TB telemetry JSON for IPFS entry
+	 *****************************************************************************/
+	void build_ipfs_file_json(String hash, uint32_t timestamp, char *buff, int buff_size)
+	{
+		StaticJsonDocument<1024> _json_doc;
+		JsonArray _root_array;
+		_json_doc.clear();
+		_root_array = _json_doc.template to<JsonArray>();
+		JsonObject json_entry = _root_array.createNestedObject();
+
+		json_entry[WATER_SENSOR_DATA_KEY_TIMESTAMP] = (long long)timestamp * 1000;
+		JsonObject values = json_entry.createNestedObject("values");
+
+		values["ipfs_hash"] = hash;
+
+		serializeJson(_json_doc, buff, buff_size);
+	}
+
+	/**
+	 * Filter outliers in an array (std dev).
+	 * Outliers are marked as -1.
+	 * @param vals  Value array
+	 * @param count Size of array
+	 * @param avg   Outputs avg of filtered array
+	 * @return      Outlier count
+	 */
+	int filter_outliers(int vals[], int count, float *avg_out)
+	{
+		float avg = 0;
+
+		// Calc avg
+		for (int i = 0; i < count; ++i)
+		{
+			avg += vals[i];
+		}
+		avg /= count;
+		printf("Avg: %3.3f\n", avg);
+
+		// Calc std dev
+		float std_dev = 0;
+		for (int i = 0; i < count; ++i)
+		{
+			std_dev += pow(vals[i] - avg, 2);
+		}
+		std_dev /= count;
+		std_dev = sqrt(std_dev);
+		printf("Std dev: %f\n", std_dev);
+
+		// Mark outliers as -1
+		// Also calc avg of clean values
+		int outlier_count = 0;
+		float valid_avg = 0;
+		for(int i=0; i<count; i++)
+		{
+			if(vals[i] < (avg - std_dev) || vals[i] > (avg + std_dev))
+			{
+				// Mark outlier
+				vals[i] = -1;
+				outlier_count++;
+			}
+			else
+			{
+				valid_avg += vals[i];
+			}
+		}
+
+		valid_avg /= (count - outlier_count);
+
+		if(avg_out != nullptr)
+			*avg_out = valid_avg;
+
+		return outlier_count;
+	}
+
+	/******************************************************************************
+    * Print array
+    ******************************************************************************/
+    void print_vals(const int vals[], int count)
+    {
+        for (int i = 0; i < count; ++i)
+        {
+            Serial.print(vals[i], DEC);
+            if(i < count - 1)
+                Serial.print(", ");
+            else
+                Serial.print("\n");
+        }
+    }
+
+	/******************************************************************************
+	* Check if any store needs cleanup
+	* Temporary solution to work around SPIFFS bugs, until migration to LittleFS
+	******************************************************************************/
+	void cleanup_stores()
+	{
+		Log::get_store()->cleanup(false);
+		WaterSensorData::get_store()->cleanup(false);
+		SoilMoistureData::get_store()->cleanup(false);
+		Atmos41Data::get_store()->cleanup(false);
 	}
 }

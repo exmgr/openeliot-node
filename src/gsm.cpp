@@ -316,10 +316,10 @@ void power_cycle()
 }
 
 /*****************************************************************************
-* Update time from NTP
+* Update SIM module's time from NTP and return it
 *****************************************************************************/
 RetResult update_ntp_time()
-{
+{	
 	#if WIFI_DATA_SUBMISSION
 		configTime(0, 0, NTP_SERVER);
 
@@ -332,11 +332,50 @@ RetResult update_ntp_time()
 		{
 			return RET_ERROR;
 		}
-	#endif
+	#elif defined(TINY_GSM_MODEM_SIM7000)
+		debug_print(F("NTP Server: "));
+		debug_println(NTP_SERVER);
 
-	#ifdef TINY_GSM_MODEM_SIM7000
-		debug_println(F("SIM7000 doesn't support NTP sync, aborting."));
-		return RET_ERROR;
+		_modem.sendAT(GF("+CNTPCID=1"));
+		if (_modem.waitResponse(10000L)!= 1)
+			return RET_ERROR;
+
+		// _modem.sendAT(GF("+CNTP=pool.ntp.org,0,1,2"));
+
+		_modem.sendAT(GF("+CNTP="), NTP_SERVER, ',', 0, ',', 1, ',', 2);
+		if (_modem.waitResponse(10000L)  != 1)
+			return RET_ERROR;
+
+		_modem.sendAT(GF("+CNTP"));
+		if(_modem.waitResponse(15000L, GF(GSM_NL "+CNTP:")))
+		{
+	        String code = _modem.stream.readStringUntil(',');
+			debug_println();
+			if(code.toInt() != 1)
+			{
+				debug_print_e(F("NTP Error: "));
+				debug_println(code.toInt(), DEC);
+				return RET_ERROR;
+			}
+
+			_modem.streamSkipUntil('"');
+			String timestring = _modem.stream.readStringUntil('"');
+
+			debug_print(F("NTP Returned: "));
+			debug_println(timestring);
+
+			tm ntp_time = {0};
+			if(parse_time(timestring.c_str(), &ntp_time, false) == RET_OK)
+			{
+				return RTC::tstamp_valid(mktime(&ntp_time)) ? RET_OK : RET_ERROR;
+			}
+			else
+				return RET_ERROR;
+		}
+		else
+			return RET_ERROR;
+
+		return RET_OK;
 	#else
 		debug_print(F("Updating time from: "));
 		debug_println(NTP_SERVER);
@@ -374,26 +413,51 @@ RetResult get_time(tm *out)
 		return RET_ERROR;
 	}
 
-	if (0 == sscanf(date_time.c_str(), "%02d/%02d/%02d,%02d:%02d:%02d",
-					&(out->tm_year), &(out->tm_mon), &(out->tm_mday),
-					&(out->tm_hour), &(out->tm_min), &(out->tm_sec)))
+	return parse_time(date_time.c_str(), out, true);
+}
+
+/******************************************************************************
+* Parse time string returned by SIM time functions
+******************************************************************************/
+RetResult parse_time(const char *timestring, tm *out, bool gsm_time)
+{
+	debug_print(F("Parsing time string: "));
+	debug_println(timestring);
+
+	// NTP and GSM time functions return differently formmated year in the timestring
+	char format_ntp[] = "%04d/%02d/%02d,%02d:%02d:%02d";
+	char format_gsm[] = "%02d/%02d/%02d,%02d:%02d:%02d";
+	char *format = gsm_time ? format_gsm : format_ntp;
+
+	if (6 != sscanf(timestring, format,
+				&(out->tm_year), &(out->tm_mon), &(out->tm_mday),
+				&(out->tm_hour), &(out->tm_min), &(out->tm_sec)))
 	{
-		debug_print(F("Could not parse FONA time: "));
-		debug_println(buff);
+		debug_println_e(F("Could not parse time string."));
 
 		// 0 vars parsed
 		return RET_ERROR;
 	}
 
-	// Year in GSM module counts from 2000, must count from 1900
-	// NOTE: Not in SIM7000
-	out->tm_year += 100;
-	// Month in GSM module counts from 01, must count from 00
+	// Year in GSM time is YY so counts from 2000
+	// Year in NTP time is YYYY
+	// Must count from 1900 for tm
+	if(gsm_time)
+		out->tm_year += 100;
+	else
+		out->tm_year -= 1900;
+
+	// Month counts from 01, must count from 00
 	out->tm_mon--;
 
-	time_t gsm_epoch = mktime(out);
-	debug_print(F("Parsed time in GSM module: "));
-	debug_println(ctime(&gsm_epoch));
+	// char buff[100] = "";
+	// strftime(buff, 26, "%Y-%m-%d %H:%M:%S", out);
+	// debug_print(F("Parsed time struct: "));
+	// debug_println(buff);
+
+	time_t timestamp = mktime(out);
+	debug_print(F("Parsed time: "));
+	debug_println(ctime(&timestamp));
 
 	return RET_OK;
 }

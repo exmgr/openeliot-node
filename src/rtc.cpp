@@ -18,9 +18,22 @@ namespace RTC
     //
     RtcDS3231<TwoWire> _ext_rtc(Wire);
 
+    /** Tick of last RTC sync (valid or not). Used to calculate time for autosync */
+    uint32_t _last_sync_tick = 0;
+
+    /** Last drift check tstamp */
+    uint32_t _last_drift_check_tstamp = 0;
+
+    /** Tick of last drift test */
+    uint32_t _last_drift_check_tick = 0;
+
+    bool _timechange_safety_enabled = true;
+
     //
     // Private functions
     //
+    void reset_drift_check();
+    bool check_timechange_safe(uint32_t tstamp);
 
     /******************************************************************************
      * Initialization
@@ -32,6 +45,8 @@ namespace RTC
         {
             ret = init_external_rtc();
         }
+
+        reset_drift_check();
 
         return ret;
     }
@@ -50,9 +65,22 @@ namespace RTC
      * @return RET_ERROR if all of the above methods failed, and there is no valid
      *                   system time
      *****************************************************************************/
-    RetResult sync()
+    RetResult sync(bool enable_safety)
     {
         debug_println(F("Syncing RTC"));
+
+        _timechange_safety_enabled = enable_safety;
+        enable_timechange_safety(enable_safety);
+
+        enum TIME_SOURCE
+        {
+            TIME_SOURCE_OTHER,
+            TIME_SOURCE_NTP,
+            TIME_SOURCE_HTTP,
+            TIME_SOURCE_GSM
+        };
+
+        TIME_SOURCE time_source = TIME_SOURCE_OTHER;
 
         // For log
         uint32_t tstamp_before_sync = get_timestamp();
@@ -62,34 +90,43 @@ namespace RTC
         // No need to update external RTC because this is where we got the time from
         bool update_ext_rtc = true;
 
-        // Try to get time from GSM/NTP
-        if(GSM::connect_persist() == RET_OK)
+        
+        if(GSM::is_gprs_connected() || GSM::connect_persist() == RET_OK)
         {
-            // Try to sync GSM module's RTC from NTP
-            if(sync_gsm_rtc_from_ntp() == RET_OK && sync_time_from_gsm_rtc() == RET_OK)
+            if(GSM::is_gprs_connected())
+            {
+                debug_println_i(F("Already connected"));
+            }
+            
+            // Get time from plain HTTP
+            if(sync_time_from_http() == RET_OK)
             {
                 Utils::serial_style(STYLE_BLUE);
-                debug_println(F("System time synced with NTP."));
+                debug_println(F("System time synced with HTTP."));
                 Utils::serial_style(STYLE_RESET);
                 ret = RET_OK;
+
+                time_source = TIME_SOURCE_HTTP;
             }
             else
             {
 				Utils::serial_style(STYLE_RED);
-				debug_println(F("Sync time time from NTP failed."));
+				debug_println(F("Sync time time from HTTP failed."));
 				Utils::serial_style(STYLE_RESET);
-
-                // Get time from plain HTTP
-                if(sync_time_from_http() == RET_OK)
+                
+                // Try to get time from GSM/NTP
+                if(sync_gsm_rtc_from_ntp() == RET_OK && sync_time_from_gsm_rtc() == RET_OK)
                 {
                     Utils::serial_style(STYLE_BLUE);
-                    debug_println(F("System time synced with HTTP."));
+                    debug_println(F("System time synced with NTP."));
                     Utils::serial_style(STYLE_RESET);
                     ret = RET_OK;
+
+                    time_source = TIME_SOURCE_NTP;
                 }
                 else
                 {
-                    debug_println(F("Synctime time from HTTP failed."));
+                    debug_println(F("Synctime time from NTP failed."));
 
                     // Get time from external RTC (if enabled)
                     if(FLAGS.EXTERNAL_RTC_ENABLED && sync_time_from_ext_rtc() == RET_OK)
@@ -112,6 +149,7 @@ namespace RTC
                             Utils::serial_style(STYLE_BLUE);
                             debug_println(F("System time synced with GSM time."));
                             Utils::serial_style(STYLE_RESET);
+                            time_source = TIME_SOURCE_GSM;
                             ret = RET_OK;
                         }
                         else
@@ -143,8 +181,19 @@ namespace RTC
             set_external_rtc_time(time(NULL));
         }
 
-        // Log after finishing so the log entry has the correct timestamp
-        Log::log(Log::RTC_SYNC, tstamp_before_sync);
+        // Log AFTER finishing so the log entry has the correct timestamp
+        Log::log(Log::RTC_SYNC, tstamp_before_sync, time_source);
+
+        // Keep track of last time sync, failed or not
+        _last_sync_tick = millis();
+
+        // Keep track of last set timestmap
+        if(ret == RET_OK)
+        {
+            reset_drift_check();
+        }
+
+        enable_timechange_safety(true);
 
         return ret;
     }
@@ -154,14 +203,9 @@ namespace RTC
     ******************************************************************************/
     RetResult sync_gsm_rtc_from_ntp()
     {
-        #ifdef TINY_GSM_MODEM_SIM7000
-            debug_println(F("SIM7000 doesn't support NTP sync, aborting."));
-            return RET_ERROR;
-        #endif
-
         RetResult ret = RET_ERROR;
         int tries = GSM_TRIES;
-        debug_println(F("Syncing GSM module time with NTP."));
+        debug_println_i(F("Syncing GSM module time with NTP."));
 
         //
         // Try to update GSM module time from NTP
@@ -202,7 +246,7 @@ namespace RTC
         tm tm_now = {0};
         tries = GSM_TRIES;
 
-        debug_println(F("Getting time from GSM module."));
+        debug_println_i(F("Getting time from GSM module."));
 
         RetResult ret = RET_ERROR;
         while(tries--)
@@ -223,7 +267,7 @@ namespace RTC
 
 		uint32_t timestamp = mktime(&tm_now);
 		
-		if(!tstamp_valid(timestamp))
+		if(!check_timechange_safe(timestamp))
 		{
 			debug_println(F("GSM time invalid."));
 			return RET_ERROR;
@@ -298,7 +342,7 @@ namespace RTC
 
         timestamp -= offset_sec;
 
-        if(!tstamp_valid(timestamp))
+        if(!check_timechange_safe(timestamp))
         {
             debug_print(F("Invalid timestamp received or resp. not a timestamp: "));
             debug_println(timestamp, DEC);
@@ -328,7 +372,7 @@ namespace RTC
 
         uint32_t ext_rtc_tstamp = _ext_rtc.GetDateTime().Epoch32Time();
 
-        if(!tstamp_valid(ext_rtc_tstamp))
+        if(!check_timechange_safe(ext_rtc_tstamp))
         {
             debug_print(F("Got invalid timestamp from ext rtc: "));
             debug_println(ext_rtc_tstamp, DEC);
@@ -492,12 +536,122 @@ namespace RTC
         return _ext_rtc.GetTemperature().AsFloatDegC();
     }
 
+     /******************************************************************************
+     * Get last sync tick
+     *****************************************************************************/
+    uint32_t get_last_sync_tick()
+    {
+        return _last_sync_tick;
+    }
+
     /******************************************************************************
     * Check timestamp for validity by comparing to a recent tstamp
     ******************************************************************************/
     bool tstamp_valid(uint32_t tstamp)
     {
         return (tstamp > FAIL_CHECK_TIMESTAMP_START && tstamp < FAIL_CHECK_TIMESTAMP_END);
+    }
+
+    /******************************************************************************
+     * Check if RTC drifted into past/future by comparing time passed since 
+     *****************************************************************************/
+    int detect_drift()
+    {
+        if(!FLAGS.EXTERNAL_RTC_ENABLED)
+        {
+            return 0;
+        }
+
+        int drift = 0;
+        uint32_t cur_tstamp = RTC::get_external_rtc_timestamp();
+        uint32_t cur_tick = millis();
+
+        if(_last_drift_check_tick == 0 || _last_drift_check_tstamp == 0)
+        {
+            return 0;
+        }
+        
+        printf("Last set tstamp: %u\n", _last_drift_check_tstamp);
+        printf("Cur tstamp: %u\n", cur_tstamp);
+
+        uint32_t tick_since_sync_sec = (cur_tick - _last_drift_check_tick) / 1000;
+        uint32_t tstamp_since_sync = abs((int)cur_tstamp - (int)_last_drift_check_tstamp);
+
+        printf("Tick since sync sec: %u\n", tick_since_sync_sec);
+        printf("TStamp since sync: %u\n", tstamp_since_sync);
+
+        // Allow 5% drift on tick seconds passed since last sync
+        int tol = ceil(tick_since_sync_sec  * 0.05);
+        tol = tol < 10 ? 10 : tol;
+
+        printf("Tol: %d\n", tol);
+        if(tstamp_since_sync < tick_since_sync_sec - tol || tstamp_since_sync > tick_since_sync_sec + tol)
+        {
+            printf("!!!Drift by sec: %d\n", tstamp_since_sync - tick_since_sync_sec);
+            
+            return tstamp_since_sync - tick_since_sync_sec;
+        }
+        
+        return 0;
+    }
+
+    /******************************************************************************
+     * Reset drift check vals
+     * These vals are used as a reference points for checking if the RTC has drifted
+     *****************************************************************************/
+    void reset_drift_check()
+    {
+        _last_drift_check_tick = millis();
+        _last_drift_check_tstamp = get_timestamp();
+    }
+
+    /******************************************************************************
+    * Check if time change to provided timestamp is safe.
+    * Time change is considered safe when it is not older than compile time
+    * AND is not far apart from current timestamp. This prevents invalid timestamps
+    * provided by a time sync method from corrupting system time, unless told to
+    * do so by the user (eg. remote control RTC sync)
+    ******************************************************************************/
+    bool check_timechange_safe(uint32_t tstamp)
+    {
+        if(!tstamp_valid(tstamp))
+            return false;
+
+        if(_timechange_safety_enabled)
+        {
+            if(!FLAGS.EXTERNAL_RTC_ENABLED)
+                return true;
+
+            uint32_t cur_tstamp = RTC::get_timestamp();
+
+            int tol = ceil((millis() - _last_sync_tick) / 1000) * 0.05;
+            tol = tol < 10 ? 10 : tol;
+
+            if(tstamp < cur_tstamp - tol || tstamp > cur_tstamp + tol)
+            {
+                debug_print_e(F("Timechange not safe. From: "));
+                debug_print(cur_tstamp, DEC);
+                debug_print(" - To: ");
+                debug_println(tstamp);
+
+                // Temp. Should be placed elsewhere
+                Log::log(Log::RTC_DETECTED_UNSAFE_TIMECHANGE, tstamp);
+
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /******************************************************************************
+    * Enables time change safety check, which prevents system time from changing
+    * to an unsafe value. ie. a value that is larger or smaller than the current
+    * time within a tolerance range.
+    ******************************************************************************/
+    void enable_timechange_safety(bool val)
+    {
+        _timechange_safety_enabled = val;
     }
 
     /******************************************************************************
@@ -508,8 +662,10 @@ namespace RTC
         debug_print("Time: ");
         time_t cur_tstamp = time(NULL);
 
-        Serial.print(F("External RTC time: "));
+        Serial.print(F("External RTC timestamp: "));
         Serial.println(RTC::get_external_rtc_timestamp(), DEC);
+        Serial.print(F("System RTC timestamp: "));
+        Serial.println(RTC::get_timestamp(), DEC);
         
         debug_print(ctime(&cur_tstamp));
         debug_print("(");

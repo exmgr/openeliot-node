@@ -9,6 +9,7 @@
 #include "water_sensor_data.h"
 #include "flash.h"
 #include "common.h"
+#include "lightning_data.h"
 
 /******************************************************************************
 * Constructor
@@ -235,4 +236,5 @@ template class DataStoreReader<Atmos41Data::Entry>;
 template class DataStoreReader<SoilMoistureData::Entry>;
 template class DataStoreReader<Log::Entry>;
 template class DataStoreReader<FoData::StoreEntry>;
+template class DataStoreReader<LightningData::Entry>;
 template class DataStoreReader<SDI12Log::Entry>;

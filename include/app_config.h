@@ -6,7 +6,7 @@
 #include "sdi12_sensor.h"
 
 /** FW Version */
-const int FW_VERSION = 141;
+const int FW_VERSION = 165;
 
 /******************************************************************************
  * Credentials
@@ -26,7 +26,7 @@ extern const int TB_PORT;
  * Enable redirecting all debug log messages to HTTP log service with Wifi.
  * Increases binary size significantly and slows down firmware execution. To be
  * used only for debugging. Wifi debug console uses the much larger ESP http
- *  library because ArduinoHttpClient doesn't support SSL.
+ * library because ArduinoHttpClient doesn't support SSL.
  */
 #define WIFI_DEBUG_CONSOLE false
 
@@ -57,12 +57,15 @@ volatile const FLAGS_T FLAGS
     /** Submit data though WiFi instead of GSM */
     WIFI_DATA_SUBMISSION_ENABLED: WIFI_DATA_SUBMISSION,
 
-    /** Enable Fueld Gauge. If false ADC is used */
-    FUEL_GAUGE_ENABLED: false,
+    /** Enable Battery Gauge. */
+    BATTERY_GAUGE_ENABLED: false,
+
+    /** Enable solar panel current monitor */
+    SOLAR_CURRENT_MONITOR_ENABLED: false,
 
     /** Enable NBIoT mode. If false GSM is used */
     NBIOT_MODE: false,
-
+    
     /** When sleeping treat minutes as seconds. Used for debugging */
     SLEEP_MINS_AS_SECS: false,
 
@@ -74,10 +77,13 @@ volatile const FLAGS_T FLAGS
     WATER_QUALITY_SENSOR_ENABLED: true,
     
     /** Take measurements from water level sensor */
-    WATER_LEVEL_SENSOR_ENABLED: false,
+    WATER_LEVEL_SENSOR_ENABLED: true,
+
+    /** Take measurements from water presence sensor */
+    WATER_PRESENCE_SENSOR_ENABLED: false,
 
     /** Take measurements from Atmos41 weather station */
-    WEATHER_STATION_ENABLED: false,
+    ATMOS41_ENABLED: false,
 
     /** Take measurements from soil moisture sensor */
     SOIL_MOISTURE_SENSOR_ENABLED: false,
@@ -91,8 +97,16 @@ volatile const FLAGS_T FLAGS
     /** Return dummy values when measuring weather data */
     MEASURE_DUMMY_WEATHER: false,
 
+    LIGHTNING_SENSOR_ENABLED: false,
+
+    /** Sync RTC automatically on preset intervals */
+    RTC_AUTO_SYNC: false,
+
     /** Use external RTC when syncing time */
-    EXTERNAL_RTC_ENABLED: true
+    EXTERNAL_RTC_ENABLED: true,
+
+    /** Submit data to IPFS */
+    IPFS: false
 }; 
 
 /** Print serial comms between the MCU and the GSM module (used by tinyGSM) */
@@ -102,30 +116,63 @@ volatile const FLAGS_T FLAGS
  is full, data is commited to flash */
 const int DATA_STORE_BUFFER_ELEMENTS = 10;
 
+/******************************************************************************
+* RTC/Time
+******************************************************************************/
 /** NTP server used by GSM module for time sync */
 const char NTP_SERVER[] PROGMEM = "pool.ntp.org";
 
-/** URL for plain HTTP rtc time sync 
- * GET requests to this URL must return just a timestamp and nothing else in its response body */
-const char HTTP_TIME_SYNC_URL[] = "parnassos.exm.gr:1880/api/ts";
-// const char HTTP_TIME_SYNC_URL[] = "uploader.gr/eliot/time.php";
-
+/** Intervals on which RTC will be automatically synced when RTC auto sync is ON.
+ * Interval is checked on call home so it is rounded to call home intervals */
+const int RTC_AUTOSYNC_INTERVAL_MIN = 240;
 /** 
  * Channel to use when capturing data from Water Level sensor 
 */
-const WaterLevelChannel WATER_LEVEL_INPUT_CHANNEL = WATER_LEVEL_CHANNEL_DFROBOT_ULTRASONIC_SERIAL;
-// const WaterLevelChannel WATER_LEVEL_INPUT_CHANNEL = WATER_LEVEL_CHANNEL_MAXBOTIX_PWM;
+// const WaterLevelChannel WATER_LEVEL_INPUT_CHANNEL = WATER_LEVEL_CHANNEL_DFROBOT_ULTRASONIC_SERIAL;
+const WaterLevelChannel WATER_LEVEL_INPUT_CHANNEL = WATER_LEVEL_CHANNEL_MAXBOTIX_PWM;
 // const WaterLevelChannel WATER_LEVEL_INPUT_CHANNEL = WATER_LEVEL_CHANNEL_MAXBOTIX_SERIAL;
 
-// const AquatrollModel AQUATROLL_MODEL = AQUATROLL_MODEL_400;
+const AquatrollModel AQUATROLL_MODEL = AQUATROLL_MODEL_400;
 // const AquatrollModel AQUATROLL_MODEL = AQUATROLL_MODEL_500;
-const AquatrollModel AQUATROLL_MODEL = AQUATROLL_MODEL_600;
+// const AquatrollModel AQUATROLL_MODEL = AQUATROLL_MODEL_600;
 
 /**
  * FineOffset weather station source: sniffer/uart
  */
-// const FineOffsetSource FO_SOURCE = FO_SOURCE_SNIFFER;
-const FineOffsetSource FO_SOURCE = FO_SOURCE_UART;
+const FineOffsetSource FO_SOURCE = FO_SOURCE_SNIFFER;
+// const FineOffsetSource FO_SOURCE = FO_SOURCE_UART;
+
+/**
+ * Lightning sensor module to use
+ */
+#define LIGHTNING_SENSOR_MODULE LIGHTNING_SENSOR_DFROBOT
+
+/** DFRobot */
+#ifndef LIGHTNING_SENSOR_MODULE
+#error "Lightning sensor module not set"
+#endif
+
+#if LIGHTNING_SENSOR_MODULE == LIGHTNING_SENSOR_DFROBOT
+
+const uint8_t LIGHTNING_I2C_ADDR = 0x03;
+const uint8_t LIGHTNING_DIV_RATIO = 16;
+const uint8_t LIGHTNING_TUNE_CAP = 120;
+
+#elif LIGHTNING_SENSOR_MODULE == LIGHTNING_SENSOR_CJMCU
+/** CJMCU */
+const uint8_t LIGHTNING_I2C_ADDR = 0x01;
+const uint8_t LIGHTNING_DIV_RATIO = 16;
+const uint8_t LIGHTNING_TUNE_CAP = 8;
+#else
+#error Invalid Lightning sensor module specified
+#endif
+
+/**
+ * Battery gauge
+ */
+const int BAT_GAUGE_FULL_MAH = 3000;
+
+
 
 /******************************************************************************
 * Sleep/wake up schedules
@@ -169,6 +216,12 @@ const SleepScheduler::WakeupScheduleEntry WAKEUP_SCHEDULE_BATT_LOW[WAKEUP_SCHEDU
 const float FO_SNIFFER_FREQ = 868.35;
 
 /******************************************************************************
+ * Lightning sensor
+ *****************************************************************************/
+// const LightningEnvironment LIGHTNING_ENVIRONMENT = LIGHTNING_ENV_INDOOR;
+const LightningEnvironment LIGHTNING_ENVIRONMENT = LIGHTNING_ENV_OUTDOOR;
+
+/******************************************************************************
  * Power
  *****************************************************************************/
 /**
@@ -182,9 +235,9 @@ const int BATTERY_LEVEL_LOW = 50;
  * When in this mode, device wakes up every SLEEP_CHARGE_CHECK_INT_MINS to check
  * if battery reached BATTERY_LEVEL_SLEEP_RECHARGED.
 */
-const int BATTERY_LEVEL_SLEEP_CHARGE = 15;
-const int BATTERY_LEVEL_SLEEP_RECHARGED = 25;
+const int BATTERY_LEVEL_SLEEP_CHARGE = 25;
+const int BATTERY_LEVEL_SLEEP_RECHARGED = 35;
 
-const int SLEEP_CHARGE_CHECK_INT_MINS = 60;
+const int SLEEP_CHARGE_CHECK_INT_MINS = 30;
 
 #endif

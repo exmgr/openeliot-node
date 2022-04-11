@@ -13,6 +13,7 @@
 #include "tb_soil_moisture_data_json_builder.h"
 #include "tb_sdi12_log_json_builder.h"
 #include "tb_fo_data_json_builder.h"
+#include "tb_lightning_data_json_builder.h"
 #include "tb_log_json_builder.h"
 #include "test_utils.h"
 #include "utils.h"
@@ -29,6 +30,12 @@
 #include "fo_sniffer.h"
 #include "fo_uart.h"
 #include "fo_buffer.h"
+#include "battery_gauge.h"
+#include "solar_monitor.h"
+#include "rtc.h"
+#include "credentials.h"
+#include <HTTPClient.h>
+#include "ipfs_client.h"
 
 namespace CallHome
 {
@@ -48,6 +55,11 @@ namespace CallHome
 	{
 		RTC::print_time();
 
+		Utils::cleanup_stores();		
+
+		BatteryGauge::log();
+		SolarMonitor::log();
+
 		Utils::serial_style(STYLE_YELLOW);
 		Utils::print_separator(F("Calling Home"));
 		Utils::serial_style(STYLE_RESET);
@@ -63,20 +75,11 @@ namespace CallHome
 		Log::log(Log::SCHEDULE_SOIL_MOISTURE_INT, DeviceConfig::get_wakeup_schedule_reason_int(SleepScheduler::WakeupReason::REASON_READ_SOIL_MOISTURE_SENSOR));
 		//
 
-		if(FLAGS.FUEL_GAUGE_ENABLED)
-		{
-			Battery::log_gauge();
-		}	
-		
 		Battery::log_adc();
 		Battery::log_solar_adc();
+		Log::log(Log::BATTERY_MDDE, Battery::get_last_mode());
 
 		Log::log(Log::Code::FS_SPACE, SPIFFS.usedBytes(), SPIFFS.totalBytes() - SPIFFS.usedBytes());
-
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("FILES BEFORE CALLING HOME"));
-		Flash::ls();
-		Utils::serial_style(STYLE_RESET);
 
 		GSM::on();
 		if(GSM::connect_persist() != RET_OK)
@@ -89,6 +92,19 @@ namespace CallHome
 
 		// Log RSSI
 		Log::log(Log::GSM_RSSI, GSM::get_rssi());
+
+		if(FLAGS.RTC_AUTO_SYNC)
+		{
+			uint32_t last_sync_tick = RTC::get_last_sync_tick();
+			uint32_t mins_since_last_tick = ((millis() - last_sync_tick) / 1000 / 60);
+			
+			if(mins_since_last_tick >= RTC_AUTOSYNC_INTERVAL_MIN)
+			{
+				debug_println_i(F("RTC auto sync"));
+				RTC::sync();
+				Log::log(Log::RTC_SYNC, 0, 1);
+			}
+		}
 
 		//
 		// Ask for remote control data and apply
@@ -133,12 +149,19 @@ namespace CallHome
 		//
 		if(FO_SOURCE == FO_SOURCE_SNIFFER)
 		{
+			Serial.println(F("Commiting FO sniffer data."));
 			FoSniffer::commit_buffer();
 		}
 		else if(FO_SOURCE == FO_SOURCE_UART)
 		{
+			Serial.println(F("Commiting FO UART data."));
 			FoUart::commit_buffer();
 		}
+
+		Utils::serial_style(STYLE_BLUE);
+		Utils::print_separator(F("FILES BEFORE SUBMITTING TELEMETRY"));
+		Flash::ls();
+		Utils::serial_style(STYLE_RESET);
 
 		//
 		// Submit all telemetry from data store
@@ -174,6 +197,8 @@ namespace CallHome
 		Log::log(Log::CALLING_HOME_END);
 		Log::log(Log::Code::FS_SPACE, SPIFFS.usedBytes(), SPIFFS.totalBytes() - SPIFFS.usedBytes());
 
+		BatteryGauge::log();
+
 		return RET_OK;
 	}
 
@@ -183,107 +208,177 @@ namespace CallHome
 	 *****************************************************************************/
 	RetResult handle_telemetry()
 	{
-		DataStoreSubmitStats stats = {0};
+		DataStoreSubmitStats telemetry_stats = {0};
 
+		//
+		// Array of lambdas each submitting telemetry for a single sensor/store
+		//
+		RetResult (* tasks[])(DataStoreSubmitStats*) = {
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit water sensor data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting water sensor data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<WaterSensorData::Entry>, TbWaterSensorDataJsonBuilder, WaterSensorData::Entry>(WaterSensorData::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				debug_print_i(F("Water sensor data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit weather data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting weather data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<Atmos41Data::Entry>, TbAtmos41DataJsonBuilder, Atmos41Data::Entry>(Atmos41Data::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Atmos41 data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit soil moisture sensor data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting soil moisture data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<SoilMoistureData::Entry>, TbSoilMoistureDataJsonBuilder, SoilMoistureData::Entry>(SoilMoistureData::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Soil moisture data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit FO data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting FineOffset weather data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<FoData::StoreEntry>, TbFoDataJsonBuilder, FoData::StoreEntry>(FoData::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("FineOffset weather data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit Lightning data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting Lightning data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<LightningData::Entry>, TbLightningDataJsonBuilder, LightningData::Entry>(LightningData::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Lightning data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit SDI12 debug data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting SDI12 debug data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<SDI12Log::Entry>, TbSDI12LogJsonBuilder, SDI12Log::Entry>(SDI12Log::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("SDI12 debug data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+            [](DataStoreSubmitStats *telemetry_stats) mutable -> RetResult
+			{ 
+				//
+				// Submit SDI12 debug data
+				//
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("Submitting SDI12 debug data."));
+				Utils::serial_style(STYLE_RESET);
+
+				submit_stored_telemetry<DataStore<SDI12Log::Entry>, TbSDI12LogJsonBuilder, SDI12Log::Entry>(SDI12Log::get_store(), telemetry_stats);
+
+				Utils::serial_style(STYLE_BLUE);
+				Utils::print_separator(F("SDI12 debug data submission complete"));
+				Utils::serial_style(STYLE_RESET);
+			},
+    	};
+
+		//
+		// IPFS
+		//
+		submit_ipfs();
+
+		//
+		// Submit telemetry
+		//
+		bool submission_aborted = false;
 		// Keep track of time elapsed
 		uint32_t telemetry_start_millis = millis();
 
-		//
-		// Submit water sensor data
-		//
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Submitting water sensor data."));
-		Utils::serial_style(STYLE_RESET);
+		for(int i = 0; i < sizeof(tasks) / sizeof(tasks[0]); i++)
+		{
+			tasks[i](&telemetry_stats);
 
-		submit_stored_telemetry<DataStore<WaterSensorData::Entry>, TbWaterSensorDataJsonBuilder, WaterSensorData::Entry>(WaterSensorData::get_store(), &stats);
+			if(telemetry_stats.failed_requests >= FAILED_TELEMETRY_REQ_THRESHOLD)
+			{
+				debug_println_e(F("Request error threshold reached, aborting telemetry submission"));
+				submission_aborted = true;
+				break;
+			}
+		}
 
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Water sensor data submission complete"));
-		Utils::serial_style(STYLE_RESET);
-
-		//
-		// Submit weather data
-		//
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Submitting weather data."));
-		Utils::serial_style(STYLE_RESET);
-
-		submit_stored_telemetry<DataStore<Atmos41Data::Entry>, TbAtmos41DataJsonBuilder, Atmos41Data::Entry>(Atmos41Data::get_store(), &stats);
-
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Weather data submission complete"));
-		Utils::serial_style(STYLE_RESET);
-
-		//
-		// Submit soil moisture sensor data
-		//
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Submitting soil moisture data."));
-		Utils::serial_style(STYLE_RESET);
-
-		submit_stored_telemetry<DataStore<SoilMoistureData::Entry>, TbSoilMoistureDataJsonBuilder, SoilMoistureData::Entry>(SoilMoistureData::get_store(), &stats);
-
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Soil moisture data submission complete"));
-		Utils::serial_style(STYLE_RESET);
-		
-		//
-		// Submit FO data
-		//
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Submitting FineOffset weather data."));
-		Utils::serial_style(STYLE_RESET);
-
-		submit_stored_telemetry<DataStore<FoData::StoreEntry>, TbFoDataJsonBuilder, FoData::StoreEntry>(FoData::get_store(), &stats);
-
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("FineOffset weather data submission complete"));
-		Utils::serial_style(STYLE_RESET);
-
-
-		//
-		// Submit SDI12 debug data
-		//
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("Submitting SDI12 debug data."));
-		Utils::serial_style(STYLE_RESET);
-
-		submit_stored_telemetry<DataStore<SDI12Log::Entry>, TbSDI12LogJsonBuilder, SDI12Log::Entry>(SDI12Log::get_store(), &stats);
-
-		Utils::serial_style(STYLE_BLUE);
-		Utils::print_separator(F("SDI12 debug data submission complete"));
-		Utils::serial_style(STYLE_RESET);
 
 		uint32_t telemetry_elapsed_sec = (millis() - telemetry_start_millis) / 1000;
-		
 
 		//
 		// Submit logs
 		//
 		uint32_t logs_start_millis = millis();
-
-		handle_logs();
+		
+		if(handle_logs() != RET_OK)
+		{
+			submission_aborted = true;
+			debug_println_e(F("Request error threshold reached, aborting log submission"));
+		}
 
 		uint32_t logs_elapsed_sec = (millis() - logs_start_millis) / 1000;
 
 		//
-		// Print stats
+		// Print telemetry_stats
 		//
 
-		Utils::print_separator(F("Overall stats"));
+		Utils::print_separator(F("Overall telemetry stats"));
 
 		debug_print(F("Total entries: "));
-		debug_println(stats.total_entries, DEC);
+		debug_println(telemetry_stats.total_entries, DEC);
 		debug_print(F("Submitted entries: "));
-		debug_println(stats.submitted_entries, DEC);
+		debug_println(telemetry_stats.submitted_entries, DEC);
 		debug_print(F("Successful entries: "));
-		debug_println(stats.successful_entries, DEC);
+		debug_println(telemetry_stats.successful_entries, DEC);
 		debug_print(F("Entries failed CRC: "));
-		debug_println(stats.crc_failed_entries, DEC);
+		debug_println(telemetry_stats.crc_failed_entries, DEC);
 		debug_print(F("Total requests: "));
-		debug_println(stats.total_requests, DEC);
+		debug_println(telemetry_stats.total_requests, DEC);
 		debug_print(F("Failed requests: "));
-		debug_println(stats.failed_requests, DEC);
+		debug_println(telemetry_stats.failed_requests, DEC);
 		debug_println();
 		debug_print(F("Telemetry took (sec): "));
 		debug_println(telemetry_elapsed_sec, DEC);
@@ -291,17 +386,20 @@ namespace CallHome
 		debug_println(logs_elapsed_sec, DEC);
 		debug_println();
 
-		Log::log(Log::SENSOR_DATA_SUBMITTED, stats.submitted_entries, stats.crc_failed_entries);
+		Log::log(Log::SENSOR_DATA_SUBMITTED, telemetry_stats.submitted_entries, telemetry_stats.crc_failed_entries);
 
 		Log::log(Log::DATA_SUBMISSION_ELAPSED, telemetry_elapsed_sec, logs_elapsed_sec);
 
 		// Log only if errors occurred
-		if(stats.failed_requests > 0)
-			Log::log(Log::SENSOR_DATA_SUBMISSION_ERRORS, stats.total_requests, stats.failed_requests);
+		if(telemetry_stats.failed_requests > 0)
+			Log::log(Log::SENSOR_DATA_SUBMISSION_ERRORS, telemetry_stats.total_requests, telemetry_stats.failed_requests);
+
+		if(submission_aborted)
+			Log::log(Log::CALL_HOME_SUBMISSION_ABORTED);
 
 		Utils::print_separator(NULL);
 
-		return RET_OK;
+		return submission_aborted ? RET_ERROR : RET_OK;
 	}
 
 	/******************************************************************************
@@ -340,11 +438,15 @@ namespace CallHome
 		// Iterate all data and submit. Each file in flash will fit in a single request.
 		// If request succeeds, file is deleted, if not it is left to be retried next time.
 		//
+		
+		// Submission errors occurred
+		bool submission_failed = false;
+
 		while(reader.next_file())
 		{
 			cur_req_entries = 0;
 
-		// Iterate all file entries
+			// Iterate all file entries in file, check CRC and add to JSON
 			while((entry = reader.next_entry()))
 			{
 				total_entries++;
@@ -384,6 +486,13 @@ namespace CallHome
 					Utils::serial_style(STYLE_RED);
 					debug_println(F("Sending telemetry data failed. File remains to be retried next time."));
 					Utils::serial_style(STYLE_RESET);
+
+					// Max error threshold reached, abort
+					if(total_requests - successfull_entries >= FAILED_TELEMETRY_REQ_THRESHOLD)
+					{
+						submission_failed = true;
+						break;
+					}
 				}
 			}
 			else
@@ -424,8 +533,7 @@ namespace CallHome
 			stats->failed_requests += failed_requests;
 		}
 
-		// TODO: Under what conditions this function is considered failed??
-		return RET_OK;
+		return submission_failed ? RET_ERROR : RET_OK;
 	}
 
 	/******************************************************************************
@@ -435,6 +543,8 @@ namespace CallHome
 	 *****************************************************************************/
 	RetResult handle_logs()
 	{
+		RetResult ret = RET_OK;
+
 		Utils::serial_style(STYLE_BLUE);
 		Utils::print_separator(F("Submitting logs."));
 		Utils::serial_style(STYLE_RESET);
@@ -443,7 +553,8 @@ namespace CallHome
 		// accessing the file system to read the logs
 		Log::set_enabled(false);
 
-		submit_stored_telemetry<DataStore<Log::Entry>, TbLogJsonBuilder, Log::Entry>(Log::get_store(), nullptr);
+		DataStoreSubmitStats log_stats;
+		ret = submit_stored_telemetry<DataStore<Log::Entry>, TbLogJsonBuilder, Log::Entry>(Log::get_store(), &log_stats);
 
 		// Reenable logging
 		Log::set_enabled(true);
@@ -452,8 +563,9 @@ namespace CallHome
 		Utils::print_separator(F("Log submission complete"));
 		Utils::serial_style(STYLE_RESET);
 
-		return RET_OK;
+		return ret;
 	}
+
 
 	/******************************************************************************
 	 * Submit data to the TB telemetry API endpoint
@@ -484,6 +596,138 @@ namespace CallHome
 			Utils::serial_style(STYLE_RESET);
 			return RET_ERROR;
 		}
+
+		return RET_OK;
+	}
+
+	/******************************************************************************
+	* Submit 
+	******************************************************************************/
+	RetResult submit_ipfs()
+	{
+		if(!FLAGS.IPFS)
+		{
+			return RET_OK;
+		}
+
+		Utils::serial_style(STYLE_BLUE);
+		Utils::print_separator(F("Submitting IPFS."));
+		Utils::serial_style(STYLE_RESET);
+
+		//
+		// Add dummy data to store
+		//
+		// FoData::StoreEntry dummy_entry = {0};
+		// dummy_entry.hum = 434;
+		// dummy_entry.temp = 22;
+		// dummy_entry.timestamp = RTC::get_timestamp();;
+		// dummy_entry.light = 1000000;
+		// dummy_entry.solar_radiation = 1234;
+		// dummy_entry.wind_dir = 12;
+		// dummy_entry.wind_gust = 12;
+		// dummy_entry.wind_speed = 2;
+		// FoData::add(&dummy_entry);
+
+		// dummy_entry.hum = 99;
+		// dummy_entry.temp = 66;
+		// dummy_entry.timestamp = RTC::get_timestamp()+1;
+		// dummy_entry.light = 663;
+		// dummy_entry.solar_radiation = 667;
+		// dummy_entry.wind_dir = 66;
+		// dummy_entry.wind_gust = 66;
+		// dummy_entry.wind_speed = 6;
+		// FoData::add(&dummy_entry);
+		/////////
+
+		TbFoDataJsonBuilder json_builder;
+		char data_buff[TELEMETRY_DATA_JSON_OUTPUT_BUFF_SIZE] = {0};
+
+		WiFiClient wifi_client;
+		IPFSClient client(wifi_client);
+		
+		client.set_node_address(IPFS_NODE_ADDR, IPFS_NODE_PORT);
+
+		DataStoreReader<FoData::StoreEntry> reader(FoData::get_store());
+		const FoData::StoreEntry *entry = NULL;
+
+		while(reader.next_file())
+		{
+			while((entry = reader.next_entry()))
+			{
+				if(!reader.entry_crc_valid())
+				{
+					continue;
+				}
+
+				json_builder.add(entry);
+
+				// Add geohash to JSON
+				JsonDocument *json_doc = json_builder.get_json_doc();
+				
+				json_doc->getElement(0)["values"]["geohash"] = DEVICE_GEOHASH;
+
+				// Get timestamp of record
+				uint32_t tstamp = (uint64_t)json_doc->getElement(0)["ts"] / 1000;
+				
+				json_builder.build(data_buff, sizeof(data_buff), true);
+
+				// Serial.println(F("Submitting --------------------"));
+				// Serial.println(data_buff);
+				// Serial.println(F("------------------------------------------------------------------------"));
+
+				IPFSClient::IPFSFile ipfs_file = {0};
+				if(client.add(&ipfs_file, "ws", data_buff) == IPFSClient::IPFS_CLIENT_OK)
+				{
+					Serial.println(F("Hash: "));
+					Serial.println(ipfs_file.hash);
+
+					//
+					// Submit hash
+					//
+					const char cid_submit_url_format[] = "/ipfs/%s";
+					data_buff[0] = '\0';
+
+					snprintf(data_buff, sizeof(data_buff), cid_submit_url_format, ipfs_file.hash);
+
+					HttpRequest http_req(GSM::get_modem(), IPFS_MIDDLEWARE_URL);
+					http_req.set_port(IPFS_MIDDLEWARE_PORT);
+
+					debug_print(F("Submitting CID to Middleware: "));
+					debug_println(data_buff);
+					
+					RetResult ret = http_req.post(data_buff, NULL, 0, "application/json", NULL, 0);
+					Serial.flush();
+
+					if(ret != RET_OK || http_req.get_response_code() != 200)
+					{
+						debug_println_e(F("CID submission failed."));
+					}				
+					data_buff[0] = '\0';
+
+					//
+					// Submit hash to thingsboard
+					//
+					Utils::build_ipfs_file_json(ipfs_file.hash, tstamp, data_buff, sizeof(data_buff));
+					Serial.println(F("TB JSON: "));
+					Serial.println(data_buff);
+					submit_tb_telemetry(data_buff, strlen(data_buff));
+
+					data_buff[0] = '\0';
+				}
+				else
+				{
+					debug_println_e(F("Could not submit data to IPFS."));
+				}
+				
+				json_builder.reset();
+
+			}
+		}
+		//////////////////////
+
+		Utils::serial_style(STYLE_BLUE);
+		Utils::print_separator(F("IPFS submission complete"));
+		Utils::serial_style(STYLE_RESET);
 
 		return RET_OK;
 	}
@@ -590,18 +834,22 @@ namespace CallHome
 			(FLAGS.LOG_RAW_SDI12_COMMS << 1) | 
 			(FLAGS.WIFI_DEBUG_CONSOLE_ENABLED << 2) | 
 			(FLAGS.WIFI_DATA_SUBMISSION_ENABLED << 3) | 
-			(FLAGS.FUEL_GAUGE_ENABLED << 4) | 
+			(FLAGS.BATTERY_GAUGE_ENABLED << 4) | 
 			(FLAGS.NBIOT_MODE << 5) | 
 			(FLAGS.SLEEP_MINS_AS_SECS << 6) | 
 			(FLAGS.BATTERY_FORCE_NORMAL_MODE << 7) | 
 			(FLAGS.WATER_QUALITY_SENSOR_ENABLED << 8) | 
 			(FLAGS.WATER_LEVEL_SENSOR_ENABLED << 9) | 
-			(FLAGS.WEATHER_STATION_ENABLED << 10) | 
+			(FLAGS.ATMOS41_ENABLED << 10) | 
 			(FLAGS.SOIL_MOISTURE_SENSOR_ENABLED << 12) | 
 			(FLAGS.MEASURE_DUMMY_WATER_QUALITY << 13) | 
 			(FLAGS.MEASURE_DUMMY_WATER_LEVEL << 14) | 
 			(FLAGS.MEASURE_DUMMY_WEATHER << 15) | 
-			(FLAGS.EXTERNAL_RTC_ENABLED << 16);
+			(FLAGS.EXTERNAL_RTC_ENABLED << 16) | 
+			(FLAGS.SOLAR_CURRENT_MONITOR_ENABLED << 17) | 
+			(FLAGS.RTC_AUTO_SYNC << 18) | 
+			(FLAGS.IPFS << 19)
+		;
 
 		return bits;
 	}

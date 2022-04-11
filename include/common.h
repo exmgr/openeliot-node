@@ -27,8 +27,8 @@
 
     #define debug_printf(format, ...); { SERIAL_OBJECT.printf(format, ##__VA_ARGS__); }
     #define debug_printf_e(format, ...); { Serial.print(DEBUG_LEVEL_ERROR_STYLE); SERIAL_OBJECT.printf(format, ##__VA_ARGS__); Utils::serial_style(STYLE_RESET); }
-    #define debug_printf_w(format, ...); { Serial.print(DEBUG_LEVEL_WARNING_STYLE); SERIAL_OBJECTSerial.printf(format, ##__VA_ARGS__); Utils::serial_style(STYLE_RESET); }
-    #define debug_printf_i(format, ...); { Serial.print(DEBUG_LEVEL_INFO_STYLE); SeSERIAL_OBJECTrial.printf(format, ##__VA_ARGS__); Utils::serial_style(STYLE_RESET); }
+    #define debug_printf_w(format, ...); { Serial.print(DEBUG_LEVEL_WARNING_STYLE); SERIAL_OBJECT.printf(format, ##__VA_ARGS__); Utils::serial_style(STYLE_RESET); }
+    #define debug_printf_i(format, ...); { Serial.print(DEBUG_LEVEL_INFO_STYLE); SERIAL_OBJECT.printf(format, ##__VA_ARGS__); Utils::serial_style(STYLE_RESET); }
 #else
     #define debug_print(msg, ...); {}
     #define debug_print_e(msg, ...); {}

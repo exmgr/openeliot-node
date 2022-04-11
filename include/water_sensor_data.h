@@ -44,6 +44,9 @@ namespace WaterSensorData
         // Total suspended solids
         float tss;
 
+        // Capacitive water presence sensor
+        bool presence;
+
         // Range: 50 - 999cm
         float water_level;
     }__attribute__((packed));
@@ -53,6 +56,12 @@ namespace WaterSensorData
     DataStore<Entry>* get_store();
 
     void print(const Entry *data);
+
+    void print_array(WaterSensorData::Entry *entries, int size);
+
+    void print_file(char *name);
+
+    RetResult cleanup();
 }
 
 #endif

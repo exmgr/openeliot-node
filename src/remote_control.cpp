@@ -13,6 +13,7 @@
 #include "call_home.h"
 #include "test_utils.h"
 #include "fo_sniffer.h"
+#include "rtc.h"
 #include "common.h"
 
 /******************************************************************************
@@ -29,6 +30,8 @@ namespace RemoteControl
 
 	RetResult handle_user_config(JsonObject json);
 	RetResult handle_reboot(JsonObject json);
+	RetResult handle_format_spiffs(JsonObject json);
+	RetResult handle_rtc_sync(JsonObject json);
 	void set_reboot_pending(bool val);
 
 	void set_last_error(int error);
@@ -163,6 +166,12 @@ namespace RemoteControl
 		// Handle user config
 		RemoteControl::handle_user_config(json_shared);
 
+		// Handle SPIFFS format
+		RemoteControl::handle_format_spiffs(json_shared);
+
+		// Handle RTC sync
+		RemoteControl::handle_rtc_sync(json_shared);
+
 		// Handle OTA if OTA requested
 		if(json_shared.containsKey(RC_TB_KEY_DO_OTA) && ((bool)json_shared[RC_TB_KEY_DO_OTA]) == true)
 		{
@@ -174,7 +183,7 @@ namespace RemoteControl
 			CallHome::handle_logs();
 		}
 
-		// // Handle reboot
+		// Handle reboot
 		RemoteControl::handle_reboot(json_shared);
 
 		return RET_OK;
@@ -303,30 +312,6 @@ namespace RemoteControl
 			}			
 		}
 
-		// Handle SPIFFS format
-		if(json.containsKey(RC_TB_KEY_FORMAT_SPIFFS) && ((bool)json[RC_TB_KEY_FORMAT_SPIFFS]) == true)
-		{
-			debug_println(F("Formatting SPIFFS"));
-
-			// TODO: Submit logs before formatting SPIFFS?
-
-			int bytes_before_format = SPIFFS.usedBytes();
-
-			if(SPIFFS.format())
-			{
-				debug_println(F("Format complete"));
-
-				Log::log(Log::SPIFFS_FORMATTED, bytes_before_format);
-			}
-			else
-			{
-				debug_println(F("Format failed!"));
-
-				// Try to log in case format failed but FS still accessible
-				Log::log(Log::SPIFFS_FORMAT_FAILED);
-			}
-		}
-
 		// FO scan
 		if(json.containsKey(RC_TB_KEY_DO_FO_SCAN) && ((bool)json[RC_TB_KEY_DO_FO_SCAN]) == true)
 		{
@@ -378,6 +363,67 @@ namespace RemoteControl
 
 				// Mark as reboot pending and the device will be rebooted after all processes finish
 				set_reboot_pending(true);
+			}
+		}
+
+		return RET_OK;
+	}
+
+	/******************************************************************************
+	 * Format SPIFFS
+	 *****************************************************************************/
+	RetResult handle_format_spiffs(JsonObject json)	
+	{	
+		if(json.containsKey(RC_TB_KEY_DO_FORMAT_SPIFFS) && ((bool)json[RC_TB_KEY_DO_FORMAT_SPIFFS]) == true)
+		{
+			debug_println(F("Formatting SPIFFS"));
+
+			// TODO: Submit logs before formatting SPIFFS?
+
+			int bytes_before_format = SPIFFS.usedBytes();
+
+			if(SPIFFS.format())
+			{
+				debug_println(F("Format complete"));
+
+				Log::log(Log::SPIFFS_FORMATTED, bytes_before_format);
+			}
+			else
+			{
+				debug_println(F("Format failed!"));
+
+				// Try to log in case format failed but FS still accessible
+				Log::log(Log::SPIFFS_FORMAT_FAILED);
+
+				return RET_ERROR;
+			}
+		}
+
+		return RET_OK;
+	}
+
+	/******************************************************************************
+	 * Sync RTC
+	 *****************************************************************************/
+	RetResult handle_rtc_sync(JsonObject json)	
+	{	
+		if(json.containsKey(RC_TB_KEY_DO_RTC_SYNC) && ((bool)json[RC_TB_KEY_DO_RTC_SYNC]) == true)
+		{
+			//
+			// Sync RTC
+			//
+			if(RTC::sync(false) != RET_OK) // RTC turns GSM ON
+			{
+				Utils::serial_style(STYLE_RED);
+				debug_println(F("Failed to sync time, system has no source of time."));
+				Utils::serial_style(STYLE_RESET);
+
+				return RET_ERROR;
+			}
+			else
+			{
+				debug_println(F("Time sync successful."));
+				RTC::print_time();
 			}
 		}
 
